@@ -6,12 +6,12 @@
 
 <scroll-view scroll-x class="chips">
   <view wx:for="{{cats}}" wx:key="key" class="chip {{cat === item.key ? 'on' : ''}}"
-        data-key="{{item.key}}" bindtap="pickCat">{{item.label}}</view>
+        data-key="{{item.key}}" bindtap="pickCat">{{item.label}}<text class="n">{{item.n}}</text></view>
 </scroll-view>
 
 <scroll-view scroll-x class="chips">
-  <view wx:for="{{zones}}" wx:key="*this" class="chip {{zone === item ? 'on' : ''}}"
-        data-key="{{item}}" bindtap="pickZone">{{item === 'all' ? '全部区间' : item}}</view>
+  <view wx:for="{{zones}}" wx:key="key" class="chip {{zone === item.key ? 'on' : ''}}"
+        data-key="{{item.key}}" bindtap="pickZone">{{item.label}}<text class="n">{{item.n}}</text></view>
 </scroll-view>
 
 <view class="count">共 {{count}} 个指数</view>

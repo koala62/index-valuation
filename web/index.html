@@ -36,6 +36,8 @@
   .chip { font-size: 12px; padding: 5px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--card); cursor: pointer; color: #5a6270; transition: all .12s; }
   .chip:hover { border-color: #c3cbd8; }
   .chip.on { background: #1f2329; color: #fff; border-color: #1f2329; }
+  .chip.off { opacity: .38; cursor: not-allowed; background: transparent; }
+  .chip.off:hover { border-color: var(--line); }
   .chip .n { opacity: .55; margin-left: 3px; }
   .fblock { display: flex; gap: 6px; align-items: center; }
   .flabel { font-size: 12px; color: var(--muted); margin-right: 2px; }
@@ -92,19 +94,16 @@ async function load() {
   if (allData.length && !current) showDetail(allData[0].symbol);
 }
 
+function match(d, skip) {
+  return (skip === "cat" || state.cat === "all" || d.category === state.cat)
+    && (skip === "zone" || state.zone === "all" || d.zone === state.zone)
+    && (skip === "q" || !state.q || d.name.includes(state.q));
+}
+
 function renderFilters() {
-  const catChips = Object.keys(CAT_LABEL).map(k => {
-    const n = allData.filter(d => k === "all" || d.category === k).length;
-    return `<span class="chip${state.cat === k ? " on" : ""}" onclick="setF('cat','${k}')">${CAT_LABEL[k]}<span class="n">${n}</span></span>`;
-  }).join("");
-  const zoneChips = ["all", ...ZONES].map(z => {
-    const n = allData.filter(d => z === "all" || d.zone === z).length;
-    const label = z === "all" ? "全部区间" : z;
-    return `<span class="chip${state.zone === z ? " on" : ""}" onclick="setF('zone','${z}')">${label}<span class="n">${n}</span></span>`;
-  }).join("");
   document.getElementById("filters").innerHTML = `
-    <div class="fblock"><span class="flabel">类别</span>${catChips}</div>
-    <div class="fblock"><span class="flabel">区间</span>${zoneChips}</div>
+    <div class="fblock" id="catBlock"></div>
+    <div class="fblock" id="zoneBlock"></div>
     <div class="fblock">
       <select onchange="setF('sort', this.value)">
         <option value="composite"${state.sort === "composite" ? " selected" : ""}>综合分位 低→高</option>
@@ -113,17 +112,40 @@ function renderFilters() {
         <option value="pb"${state.sort === "pb" ? " selected" : ""}>PB 低→高</option>
         <option value="name"${state.sort === "name" ? " selected" : ""}>名称</option>
       </select>
-      <input type="search" placeholder="搜索指数" value="${state.q}" oninput="setF('q', this.value)">
+      <input id="q" type="search" placeholder="搜索指数" value="${state.q}" oninput="setF('q', this.value)">
     </div>`;
+  renderChips();
 }
 
-function setF(k, v) { state[k] = v; renderFilters(); apply(); }
+function renderChips() {
+  const catChips = Object.keys(CAT_LABEL).map(k => {
+    const n = allData.filter(d => (k === "all" || d.category === k) && match(d, "cat")).length;
+    return chipHtml("cat", k, CAT_LABEL[k], n);
+  }).join("");
+  const zoneChips = ["all", ...ZONES].map(z => {
+    const n = allData.filter(d => (z === "all" || d.zone === z) && match(d, "zone")).length;
+    return chipHtml("zone", z, z === "all" ? "全部区间" : z, n);
+  }).join("");
+  document.getElementById("catBlock").innerHTML = `<span class="flabel">类别</span>${catChips}`;
+  document.getElementById("zoneBlock").innerHTML = `<span class="flabel">区间</span>${zoneChips}`;
+}
+
+function chipHtml(group, key, label, n) {
+  const on = state[group] === key;
+  const off = n === 0 && !on;
+  const cls = "chip" + (on ? " on" : "") + (off ? " off" : "");
+  const click = off ? "" : ` onclick="setF('${group}','${key}')"`;
+  return `<span class="${cls}"${click}>${label}<span class="n">${n}</span></span>`;
+}
+
+function setF(k, v) {
+  state[k] = v;
+  renderChips();
+  apply();
+}
 
 function apply() {
-  let list = allData.filter(d =>
-    (state.cat === "all" || d.category === state.cat) &&
-    (state.zone === "all" || d.zone === state.zone) &&
-    (!state.q || d.name.includes(state.q)));
+  let list = allData.filter(d => match(d, null));
   const sorters = {
     composite: (a, b) => a.composite - b.composite,
     composite_desc: (a, b) => b.composite - a.composite,

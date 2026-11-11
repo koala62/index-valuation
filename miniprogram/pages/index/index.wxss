@@ -16,4 +16,5 @@
 .chip { display: inline-block; font-size: 24rpx; color: #5a6270; border: 1rpx solid #e8ebf0; background: #fff;
   border-radius: 28rpx; padding: 8rpx 24rpx; margin-right: 12rpx; }
 .chip.on { background: #1f2329; color: #fff; border-color: #1f2329; }
+.chip .n { opacity: .55; margin-left: 6rpx; }
 .count { font-size: 22rpx; color: #8a919e; padding: 4rpx 24rpx 8rpx; }

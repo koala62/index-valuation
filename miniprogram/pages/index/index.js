@@ -13,7 +13,9 @@ const ZONES = ["all", "低估", "合理偏低", "合理偏高", "高估"];
 Page({
   data: {
     list: [], raw: [], loading: true, dateInfo: "",
-    cats: CATS, zones: ZONES, cat: "all", zone: "all", count: 0
+    cats: CATS.map(c => ({ ...c, n: 0 })),
+    zones: ZONES.map(z => ({ key: z, label: z === "all" ? "全部区间" : z, n: 0 })),
+    cat: "all", zone: "all", count: 0
   },
 
   onShow() { this.load(); },
@@ -49,9 +51,18 @@ Page({
 
   applyFilter() {
     const { raw, cat, zone } = this.data;
-    const list = raw.filter(d =>
-      (cat === "all" || d.category === cat) && (zone === "all" || d.zone === zone));
-    this.setData({ list, count: list.length });
+    const hit = (d, skip) =>
+      (skip === "cat" || cat === "all" || d.category === cat) &&
+      (skip === "zone" || zone === "all" || d.zone === zone);
+    const cats = CATS.map(c => ({
+      ...c, n: raw.filter(d => (c.key === "all" || d.category === c.key) && hit(d, "cat")).length
+    }));
+    const zones = ZONES.map(z => ({
+      key: z, label: z === "all" ? "全部区间" : z,
+      n: raw.filter(d => (z === "all" || d.zone === z) && hit(d, "zone")).length
+    }));
+    const list = raw.filter(d => hit(d, null));
+    this.setData({ list, cats, zones, count: list.length });
   },
 
   pickCat(e) {
