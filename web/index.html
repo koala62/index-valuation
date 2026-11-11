@@ -188,6 +188,12 @@ function renderGrid(list) {
 let detailCache = null;
 
 async function showDetail(code) {
+  if (current === code) {
+    current = null;
+    detailCache = null;
+    apply();
+    return;
+  }
   current = code;
   apply();
   const res = await fetch("/api/indices/" + code);
@@ -300,14 +306,14 @@ function drawChart(history) {
     i = Math.max(0, Math.min(n - 1, i));
     const h = history[i], x = xs(i);
     const lines = [h.date, `综合 ${(h.composite * 100).toFixed(1)}%`, `点位 ${Math.round(h.close)}`];
-    const bw = 104, bh = 16 * lines.length + 8;
+    const bw = 122, lh = 18, bh = lh * lines.length + 12;
     let bx = x + 10; if (bx + bw > W - 4) bx = x - bw - 10; if (bx < 2) bx = 2;
     const by = Math.max(2, Math.min(H - bh - 2, ys(h.composite) - bh - 10));
     tip.innerHTML =
       `<line x1="${x}" x2="${x}" y1="${PT}" y2="${H - PB_}" stroke="#3b6ef0" stroke-dasharray="3 3" stroke-width="1"/>` +
       `<circle cx="${x}" cy="${ys(h.composite)}" r="3.5" fill="#3b6ef0"/>` +
-      `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="4" fill="rgba(18,22,30,.94)" stroke="#3b6ef0" stroke-opacity=".55"/>` +
-      lines.map((t, k) => `<text x="${bx + 8}" y="${by + 16 + k * 16}" font-size="11" fill="#e6ebf5">${t}</text>`).join("");
+      `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" fill="#12161e" fill-opacity="0.95" stroke="#3b6ef0" stroke-opacity="0.6"/>` +
+      lines.map((t, k) => `<text x="${bx + 10}" y="${by + 20 + k * lh}" font-size="12" font-weight="600" fill="#ffffff" font-family="-apple-system,PingFang SC,sans-serif">${t}</text>`).join("");
     tip.style.display = "";
   };
   svg.onpointerdown = showAt;
