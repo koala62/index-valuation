@@ -326,8 +326,19 @@ function drawChart(history) {
     tip.style.left = left + "px";
     tip.style.top = top + "px";
   };
-  svg.onpointerdown = showAt;
-  svg.onpointermove = ev => { if (ev.pointerType === "mouse") showAt(ev); };
+  let dragging = false;
+  svg.style.touchAction = "pan-y";
+  svg.onpointerdown = ev => {
+    dragging = true;
+    try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    showAt(ev);
+  };
+  svg.onpointermove = ev => {
+    if (dragging || ev.pointerType === "mouse") showAt(ev);
+  };
+  const stop = () => { dragging = false; };
+  svg.onpointerup = stop;
+  svg.onpointercancel = stop;
 }
 
 let rzTimer = null;
