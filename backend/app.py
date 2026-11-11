@@ -80,11 +80,12 @@ def list_indices(category: str | None = None, zone: str | None = None,
             "symbol", "name", "category", "category_label", "type_label", "date", "close",
             "pe_ttm", "pb", "pe_percentile", "pb_percentile", "earnings_g",
             "base_w_pe", "w_pe", "w_pb", "composite", "zone", "distorted",
-            "history_years", "stale_days")})
+            "history_years", "stale_days", "divergence", "roe", "roe_mean3",
+            "roe_percentile", "dca", "pe_norm")})
     if zone and zone != "all":
         out = [x for x in out if x.get("zone") == zone]
-    keys = {"composite": lambda x: x.get("composite", 9),
-            "composite_desc": lambda x: -x.get("composite", -9),
+    keys = {"composite": lambda x: x.get("composite") if x.get("composite") is not None else 9,
+            "composite_desc": lambda x: -(x.get("composite") if x.get("composite") is not None else -9),
             "pe": lambda x: x.get("pe_ttm", 9e9),
             "pb": lambda x: x.get("pb", 9e9),
             "name": lambda x: x.get("name", "")}
