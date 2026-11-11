@@ -147,25 +147,52 @@ def _sina_close(sina_code: str) -> pd.DataFrame:
     return df[["date", "close"]].dropna().reset_index(drop=True)
 
 
+STALE_SOURCE_DAYS = 30     # 行情源最新日期滞后超过该天数，视为断更
+
+
 def _close_series(meta: dict) -> pd.DataFrame:
     """
     取收盘价序列：东财优先、新浪兜底。
     两个源都成功时，选"结束日期最新、起始日期更早"的一份，
     防止某个源中途断更(如新浪中证红利只到2019)污染估值。
+    若最优源最新日期仍明显滞后(并发抓取被限流时东财可能临时失败、只剩断更的新浪)，
+    串行重试一轮；仍滞后则报错，宁可不写入也不落库失真数据。
     """
-    cands, errors = [], []
-    for fn, arg in ((_em_close, meta.get("em")), (_sina_close, meta.get("sina"))):
-        if not arg:
-            continue
-        try:
-            df = fn(arg)
-            if len(df) > 50:
-                cands.append(df)
-        except Exception as e:  # noqa
-            errors.append(f"{fn.__name__}:{type(e).__name__}")
+    sources = [(fn, arg) for fn, arg in ((_em_close, meta.get("em")), (_sina_close, meta.get("sina")))
+               if arg]
+    errors = []
+
+    def fetch_all():
+        out = []
+        for fn, arg in sources:
+            try:
+                df = fn(arg)
+                if len(df) > 50:
+                    out.append(df)
+            except Exception as e:  # noqa
+                errors.append(f"{fn.__name__}:{type(e).__name__}")
+        return out
+
+    def best_of(cands):
+        return max(cands, key=lambda df: (df["date"].iloc[-1], df["date"].iloc[0]))
+
+    def too_stale(df):
+        latest = pd.to_datetime(df["date"].iloc[-1])
+        return latest < pd.Timestamp.now().normalize() - pd.Timedelta(days=STALE_SOURCE_DAYS)
+
+    cands = fetch_all()
     if not cands:
         raise ValueError(f"行情获取失败 ({', '.join(errors) or '无可用数据源'})")
-    return max(cands, key=lambda df: (df["date"].iloc[-1], df["date"].iloc[0]))
+    best = best_of(cands)
+    if too_stale(best):
+        time.sleep(1)
+        errors.clear()
+        cands = fetch_all()
+        if cands:
+            best = best_of(cands)
+        if too_stale(best):
+            raise ValueError(f"行情数据中断，最新仅到 {best['date'].iloc[-1]}，暂不写入")
+    return best
 
 
 def fetch_index(code: str) -> pd.DataFrame:
