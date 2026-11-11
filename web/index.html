@@ -270,17 +270,48 @@ function drawChart(history) {
   const last = history[n - 1];
   s += `<circle cx="${xs(n - 1)}" cy="${ys(last.composite)}" r="4" fill="#3b6ef0"/>`;
   s += `<text x="${xs(n - 1) - 6}" y="${ys(last.composite) - 8}" font-size="12" fill="#3b6ef0" text-anchor="end" font-weight="600">${(last.composite * 100).toFixed(1)}%</text>`;
-  // X轴年份刻度
+  // X轴年份刻度（窄屏只保留3个）
   const years = {};
   history.forEach((h, i) => { const y = h.date.slice(0, 4); if (!(y in years)) years[y] = i; });
-  Object.entries(years).forEach(([y, i]) => {
+  const yEntries = Object.entries(years);
+  const maxLabels = W < 520 ? 3 : 6;
+  let shown = yEntries.map((_, k) => k);
+  if (yEntries.length > maxLabels) {
+    shown = [];
+    for (let k = 0; k < maxLabels; k++) shown.push(Math.round(k * (yEntries.length - 1) / (maxLabels - 1)));
+  }
+  shown.forEach(k => {
+    const [y, i] = yEntries[k];
     s += `<text x="${xs(i)}" y="${H - 8}" font-size="11" fill="#8a919e" text-anchor="middle">${y}</text>`;
   });
   // 右轴点位刻度
   [cMin, (cMin + cMax) / 2, cMax].forEach(v => {
     s += `<text x="${W - PR + 6}" y="${yc(v) + 4}" font-size="11" fill="#aab">${Math.round(v)}</text>`;
   });
-  svg.innerHTML = s;
+  svg.innerHTML = s + `<g id="tip" style="display:none"></g>`;
+
+  // 点按/滑动显示该位置数值
+  const tip = svg.querySelector("#tip");
+  const showAt = ev => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    const px = (ev.clientX - r.left) * (W / r.width);
+    let i = Math.round(((Math.min(Math.max(px, PL), W - PR)) - PL) / iw * (n - 1));
+    i = Math.max(0, Math.min(n - 1, i));
+    const h = history[i], x = xs(i);
+    const lines = [h.date, `综合 ${(h.composite * 100).toFixed(1)}%`, `点位 ${Math.round(h.close)}`];
+    const bw = 104, bh = 16 * lines.length + 8;
+    let bx = x + 10; if (bx + bw > W - 4) bx = x - bw - 10; if (bx < 2) bx = 2;
+    const by = Math.max(2, Math.min(H - bh - 2, ys(h.composite) - bh - 10));
+    tip.innerHTML =
+      `<line x1="${x}" x2="${x}" y1="${PT}" y2="${H - PB_}" stroke="#3b6ef0" stroke-dasharray="3 3" stroke-width="1"/>` +
+      `<circle cx="${x}" cy="${ys(h.composite)}" r="3.5" fill="#3b6ef0"/>` +
+      `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="4" fill="rgba(18,22,30,.94)" stroke="#3b6ef0" stroke-opacity=".55"/>` +
+      lines.map((t, k) => `<text x="${bx + 8}" y="${by + 16 + k * 16}" font-size="11" fill="#e6ebf5">${t}</text>`).join("");
+    tip.style.display = "";
+  };
+  svg.onpointerdown = showAt;
+  svg.onpointermove = ev => { if (ev.pointerType === "mouse") showAt(ev); };
 }
 
 let rzTimer = null;
