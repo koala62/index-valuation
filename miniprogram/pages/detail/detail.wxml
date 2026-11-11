@@ -1,7 +1,10 @@
 <view wx:if="{{d}}" class="page">
   <view class="card">
     <view class="row">
-      <text class="name">{{d.name}}</text>
+      <view>
+        <text class="name">{{d.name}}</text>
+        <text class="tag">{{d.category_label}} · {{d.type_label}}</text>
+      </view>
       <text class="zone" style="background:{{d.zoneColor}}">{{d.zone}}</text>
     </view>
     <view class="composite" style="color:{{d.zoneColor}}">{{d.compositePct}}%<text class="c-label">综合百分位 · {{d.date}}</text></view>
@@ -9,7 +12,7 @@
   </view>
 
   <view class="card">
-    <view class="sec-title">近10年综合百分位走势</view>
+    <view class="sec-title">近{{d.history_years}}年综合百分位走势</view>
     <canvas canvas-id="chart" id="chart" class="chart"></canvas>
     <view class="legend">
       <text><text class="dot" style="background:#3b6ef0"></text>综合百分位</text>
@@ -25,7 +28,8 @@
     <view class="stat"><view class="k">PB</view><view class="v">{{d.pb}}</view></view>
     <view class="stat"><view class="k">PB 百分位</view><view class="v">{{d.pbPct}}%</view></view>
     <view class="stat"><view class="k">平滑盈利增速</view><view class="v" style="color:{{d.yoyColor}}">{{d.yoyText}}</view></view>
-    <view class="stat"><view class="k">指数类型 · PE基准</view><view class="v" style="font-size:26rpx">{{d.type_label}} · {{(d.base_w_pe*100).toFixed(0)}}%</view></view>
+    <view class="stat"><view class="k">指数类型 · PE基准</view><view class="v" style="font-size:26rpx">{{d.type_label}} · {{d.basePePct}}%</view></view>
+    <view class="stat"><view class="k">历史覆盖</view><view class="v" style="font-size:26rpx">{{d.history_years}} 年</view></view>
     <view class="stat"><view class="k">收盘点位</view><view class="v">{{d.close}}</view></view>
   </view>
 </view>

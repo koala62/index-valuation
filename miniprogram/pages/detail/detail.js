@@ -20,6 +20,7 @@ Page({
         d.yoyColor = d.earnings_g < 0 ? "#d9453a" : "#2e9e5b";
         d.wPePct = Math.round(d.w_pe * 100);
         d.wPbPct = Math.round(d.w_pb * 100);
+        d.basePePct = Math.round(d.base_w_pe * 100);
         wx.setNavigationBarTitle({ title: d.name + " 估值" });
         this.setData({ d }, () => this.drawChart(d.history));
       },

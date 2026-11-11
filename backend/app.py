@@ -40,8 +40,10 @@ def _compute_one(code: str) -> dict:
         df = ds.load_series(code)
     if df is None:
         raise HTTPException(404, f"{code} 暂无数据，请先调用 /api/refresh")
-    name, _, itype = ds.INDICES[code]
-    result = valuation.compute(code, name, df, itype).to_dict()
+    meta = ds.INDICES[code]
+    result = valuation.compute(code, meta["name"], df, meta["type"]).to_dict()
+    result["category"] = meta["cat"]
+    result["category_label"] = ds.CATEGORY_LABEL.get(meta["cat"], "")
     result["updated_at"] = ds.last_updated(code)
     _mem_cache[code] = result
     return result
@@ -59,18 +61,43 @@ def startup():
 
 
 @app.get("/api/indices")
-def list_indices():
+def list_indices(category: str | None = None, zone: str | None = None,
+                 sort: str = "composite"):
+    """category: broad|strategy|industry；zone: 低估|合理偏低|合理偏高|高估；
+    sort: composite|composite_desc|pe|pb|name"""
     out = []
-    for code, (name, *_) in ds.INDICES.items():
+    for code, meta in ds.INDICES.items():
+        if category and category != "all" and meta["cat"] != category:
+            continue
         try:
             r = _compute_one(code)
-            out.append({k: r[k] for k in (
-                "symbol", "name", "type_label", "date", "close", "pe_ttm", "pb",
-                "pe_percentile", "pb_percentile", "earnings_g",
-                "base_w_pe", "w_pe", "w_pb", "composite", "zone", "distorted")})
         except HTTPException:
-            out.append({"symbol": code, "name": name, "error": "no_data"})
-    return {"data": out}
+            out.append({"symbol": code, "name": meta["name"], "category": meta["cat"],
+                        "category_label": ds.CATEGORY_LABEL.get(meta["cat"], ""),
+                        "error": "no_data"})
+            continue
+        out.append({k: r[k] for k in (
+            "symbol", "name", "category", "category_label", "type_label", "date", "close",
+            "pe_ttm", "pb", "pe_percentile", "pb_percentile", "earnings_g",
+            "base_w_pe", "w_pe", "w_pb", "composite", "zone", "distorted",
+            "history_years", "stale_days")})
+    if zone and zone != "all":
+        out = [x for x in out if x.get("zone") == zone]
+    keys = {"composite": lambda x: x.get("composite", 9),
+            "composite_desc": lambda x: -x.get("composite", -9),
+            "pe": lambda x: x.get("pe_ttm", 9e9),
+            "pb": lambda x: x.get("pb", 9e9),
+            "name": lambda x: x.get("name", "")}
+    return {"data": sorted(out, key=keys.get(sort, keys["composite"]))}
+
+
+@app.get("/api/categories")
+def categories():
+    counts: dict[str, int] = {}
+    for meta in ds.INDICES.values():
+        counts[meta["cat"]] = counts.get(meta["cat"], 0) + 1
+    return {"data": [{"key": k, "label": ds.CATEGORY_LABEL[k], "count": counts.get(k, 0)}
+                     for k in ds.CATEGORY_LABEL], "total": len(ds.INDICES)}
 
 
 @app.get("/api/indices/{code}")

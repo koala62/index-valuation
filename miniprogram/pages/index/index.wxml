@@ -4,12 +4,27 @@
   <view class="muted">{{dateInfo}}</view>
 </view>
 
+<scroll-view scroll-x class="chips">
+  <view wx:for="{{cats}}" wx:key="key" class="chip {{cat === item.key ? 'on' : ''}}"
+        data-key="{{item.key}}" bindtap="pickCat">{{item.label}}</view>
+</scroll-view>
+
+<scroll-view scroll-x class="chips">
+  <view wx:for="{{zones}}" wx:key="*this" class="chip {{zone === item ? 'on' : ''}}"
+        data-key="{{item}}" bindtap="pickZone">{{item === 'all' ? '全部区间' : item}}</view>
+</scroll-view>
+
+<view class="count">共 {{count}} 个指数</view>
+
 <view wx:if="{{loading}}" class="empty">加载中…</view>
-<view wx:elif="{{list.length === 0}}" class="empty">暂无数据，请确认后端服务已启动</view>
+<view wx:elif="{{list.length === 0}}" class="empty">没有符合筛选条件的指数</view>
 
 <view wx:for="{{list}}" wx:key="symbol" class="card" data-code="{{item.symbol}}" bindtap="goDetail">
   <view class="row">
-    <text class="name">{{item.name}}</text>
+    <view>
+      <text class="name">{{item.name}}</text>
+      <text class="tag">{{item.category_label}} · {{item.type_label}}</text>
+    </view>
     <text class="zone" style="background:{{item.zoneColor}}">{{item.zone}}</text>
   </view>
   <view class="composite" style="color:{{item.zoneColor}}">{{item.compositePct}}%<text class="c-label">综合百分位</text></view>
@@ -22,5 +37,6 @@
     <text>权重 PE <text class="num">{{item.wPePct}}%</text> / PB <text class="num">{{item.wPbPct}}%</text></text>
     <text>盈利增速 <text class="num">{{item.yoyText}}</text></text>
   </view>
+  <view wx:if="{{item.history_years < 8}}" class="warn">⚠ 历史仅 {{item.history_years}} 年，百分位参考意义有限</view>
   <view wx:if="{{item.distorted}}" class="warn">⚠ 盈利走弱致 PE 被动抬高，已边际下调 PE 权重</view>
 </view>

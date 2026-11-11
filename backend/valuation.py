@@ -60,6 +60,8 @@ class ValuationResult:
     composite: float              # 综合百分位 0~1
     zone: str                     # 低估/合理偏低/合理偏高/高估
     distorted: bool               # 是否存在盈利下滑导致的PE失真
+    history_years: float = 0.0    # 历史覆盖年数
+    stale_days: int = 0           # 行情滞后天数
     note: str = ""
     history: list = field(default_factory=list)  # 综合百分位历史(采样)
 
@@ -135,8 +137,11 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
 
     note = ""
     span_years = (pd.to_datetime(df["date"].iloc[-1]) - pd.to_datetime(df["date"].iloc[0])).days / 365
+    stale_days = int((pd.Timestamp.now().normalize() - pd.to_datetime(cur["date"])).days)
     if span_years < 8:
         note = f"历史数据仅约 {span_years:.1f} 年，百分位参考意义有限。"
+    if stale_days > 20:
+        note += f"行情数据截至 {str(cur['date'])[:10]}，已滞后 {stale_days} 天，估值区间可能失真。"
     if distorted:
         g1t = f"{g1:+.1%}" if g1 is not None else "--"
         g3t = f"{g3:+.1%}" if g3 is not None else "--"
@@ -164,6 +169,8 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         composite=round(composite, 4),
         zone=zone_of(composite),
         distorted=distorted,
+        history_years=round(span_years, 1),
+        stale_days=stale_days,
         note=note,
         history=history,
     )

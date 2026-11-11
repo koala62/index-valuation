@@ -32,6 +32,16 @@
   .row b { color: var(--text); font-weight: 600; }
   .warn { margin-top: 8px; font-size: 12px; color: #b26a00; background: #fdf3e0; border-radius: 8px; padding: 6px 8px; line-height: 1.5; }
   .type-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 1px 6px; font-weight: 400; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .chip { font-size: 12px; padding: 5px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--card); cursor: pointer; color: #5a6270; transition: all .12s; }
+  .chip:hover { border-color: #c3cbd8; }
+  .chip.on { background: #1f2329; color: #fff; border-color: #1f2329; }
+  .chip .n { opacity: .55; margin-left: 3px; }
+  .fblock { display: flex; gap: 6px; align-items: center; }
+  .flabel { font-size: 12px; color: var(--muted); margin-right: 2px; }
+  select, input[type=search] { font-size: 12px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--text); font-family: inherit; }
+  input[type=search] { width: 120px; }
+  .count { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
   .detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-top: 16px; padding: 18px; }
   .detail h2 { font-size: 16px; margin-bottom: 4px; }
   .detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
@@ -58,6 +68,8 @@
       <button onclick="refreshData()">刷新数据</button>
     </div>
   </header>
+  <div class="filters" id="filters"></div>
+  <div class="count" id="count"></div>
   <div class="grid" id="grid"><div class="empty">加载中…</div></div>
   <div id="detailHost"></div>
 </div>
@@ -65,15 +77,63 @@
 <script>
 const ZONE_COLOR = { "低估": "var(--low)", "合理偏低": "var(--mid-low)", "合理偏高": "var(--mid-high)", "高估": "var(--high)" };
 const pct = v => (v * 100).toFixed(1) + "%";
-let current = null, lastList = [];
+const CAT_LABEL = { all: "全部", broad: "宽基", strategy: "策略红利", industry: "行业" };
+const ZONES = ["低估", "合理偏低", "合理偏高", "高估"];
+let current = null, allData = [];
+const state = { cat: "all", zone: "all", sort: "composite", q: "" };
 
 async function load() {
   const res = await fetch("/api/indices");
   const { data } = await res.json();
-  lastList = data.filter(d => !d.error);
-  document.getElementById("dateInfo").textContent = lastList.length ? "数据日期 " + lastList[0].date : "";
-  renderGrid(lastList);
-  if (lastList.length && !current) showDetail(lastList[0].symbol);
+  allData = data.filter(d => !d.error);
+  document.getElementById("dateInfo").textContent = allData.length ? "数据日期 " + allData[0].date : "";
+  renderFilters();
+  apply();
+  if (allData.length && !current) showDetail(allData[0].symbol);
+}
+
+function renderFilters() {
+  const catChips = Object.keys(CAT_LABEL).map(k => {
+    const n = allData.filter(d => k === "all" || d.category === k).length;
+    return `<span class="chip${state.cat === k ? " on" : ""}" onclick="setF('cat','${k}')">${CAT_LABEL[k]}<span class="n">${n}</span></span>`;
+  }).join("");
+  const zoneChips = ["all", ...ZONES].map(z => {
+    const n = allData.filter(d => z === "all" || d.zone === z).length;
+    const label = z === "all" ? "全部区间" : z;
+    return `<span class="chip${state.zone === z ? " on" : ""}" onclick="setF('zone','${z}')">${label}<span class="n">${n}</span></span>`;
+  }).join("");
+  document.getElementById("filters").innerHTML = `
+    <div class="fblock"><span class="flabel">类别</span>${catChips}</div>
+    <div class="fblock"><span class="flabel">区间</span>${zoneChips}</div>
+    <div class="fblock">
+      <select onchange="setF('sort', this.value)">
+        <option value="composite"${state.sort === "composite" ? " selected" : ""}>综合分位 低→高</option>
+        <option value="composite_desc"${state.sort === "composite_desc" ? " selected" : ""}>综合分位 高→低</option>
+        <option value="pe"${state.sort === "pe" ? " selected" : ""}>PE 低→高</option>
+        <option value="pb"${state.sort === "pb" ? " selected" : ""}>PB 低→高</option>
+        <option value="name"${state.sort === "name" ? " selected" : ""}>名称</option>
+      </select>
+      <input type="search" placeholder="搜索指数" value="${state.q}" oninput="setF('q', this.value)">
+    </div>`;
+}
+
+function setF(k, v) { state[k] = v; renderFilters(); apply(); }
+
+function apply() {
+  let list = allData.filter(d =>
+    (state.cat === "all" || d.category === state.cat) &&
+    (state.zone === "all" || d.zone === state.zone) &&
+    (!state.q || d.name.includes(state.q)));
+  const sorters = {
+    composite: (a, b) => a.composite - b.composite,
+    composite_desc: (a, b) => b.composite - a.composite,
+    pe: (a, b) => a.pe_ttm - b.pe_ttm,
+    pb: (a, b) => a.pb - b.pb,
+    name: (a, b) => a.name.localeCompare(b.name, "zh"),
+  };
+  list.sort(sorters[state.sort] || sorters.composite);
+  document.getElementById("count").textContent = `共 ${list.length} 个指数`;
+  renderGrid(list);
 }
 
 function renderGrid(list) {
@@ -85,7 +145,7 @@ function renderGrid(list) {
     card.onclick = () => showDetail(d.symbol);
     const c = ZONE_COLOR[d.zone] || "#999";
     card.innerHTML = `
-      <div class="card-head"><span class="name">${d.name} <small class="type-tag">${d.type_label}</small></span>
+      <div class="card-head"><span class="name">${d.name} <small class="type-tag">${d.category_label} · ${d.type_label}</small></span>
         <span class="zone" style="background:${c}">${d.zone}</span></div>
       <div class="composite" style="color:${c}">${pct(d.composite)}<small>综合百分位</small></div>
       <div class="gauge"><div class="pin" style="left:${d.composite * 100}%"></div></div>
@@ -93,11 +153,13 @@ function renderGrid(list) {
         <span>PB ${d.pb} · 百分位 <b>${pct(d.pb_percentile)}</b></span></div>
       <div class="row"><span>权重 PE <b>${pct(d.w_pe)}</b> / PB <b>${pct(d.w_pb)}</b></span>
         <span>盈利增速 <b>${d.earnings_g == null ? "--" : (d.earnings_g * 100).toFixed(1) + "%"}</b></span></div>
+      ${d.history_years && d.history_years < 8 ? `<div class="warn">⚠ 历史仅 ${d.history_years} 年，百分位参考意义有限</div>` : ""}
+      ${d.stale_days > 20 ? `<div class="warn">⚠ 行情滞后 ${d.stale_days} 天</div>` : ""}
       ${d.distorted ? '<div class="warn">⚠ 盈利走弱致 PE 被动抬高，已边际下调 PE 权重</div>' : ""}
     `;
     grid.appendChild(card);
   });
-  if (!list.length) grid.innerHTML = '<div class="empty">暂无数据，请点击右上角「刷新数据」</div>';
+  if (!list.length) grid.innerHTML = '<div class="empty">没有符合筛选条件的指数</div>';
 }
 
 async function showDetail(code) {
@@ -105,12 +167,12 @@ async function showDetail(code) {
   document.querySelectorAll(".card").forEach(c => c.classList.remove("active"));
   const res = await fetch("/api/indices/" + code);
   const d = await res.json();
-  renderGrid(lastList);
+  apply();
   const c = ZONE_COLOR[d.zone] || "#999";
   document.getElementById("detailHost").innerHTML = `
     <div class="detail">
       <h2>${d.name} <span style="color:${c}">${pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
-      <div class="sub">近10年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
+      <div class="sub">${d.category_label} · ${d.type_label} · 近${d.history_years}年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
       <svg id="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
       <div class="legend">
         <span><i style="background:#3b6ef0"></i>综合百分位</span>
@@ -128,6 +190,7 @@ async function showDetail(code) {
         <div class="stat"><div class="k">收盘点位</div><div class="v">${d.close}</div></div>
         <div class="stat"><div class="k">指数类型</div><div class="v" style="font-size:14px">${d.type_label}</div></div>
         <div class="stat"><div class="k">PE基准→微调后</div><div class="v" style="font-size:14px">${pct(d.base_w_pe)} → ${pct(d.w_pe)}</div></div>
+        <div class="stat"><div class="k">历史覆盖</div><div class="v" style="font-size:14px">${d.history_years} 年</div></div>
       </div>
     </div>`;
   drawChart(d.history);
