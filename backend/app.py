@@ -9,9 +9,14 @@ GET  /                       网页版前端
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
 import shutil
 import threading
+import time
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +31,9 @@ WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
 # 随仓库持久化的数据文件：容器重启后运行库被清空时，先从仓库副本恢复
 SEED_DB = Path(__file__).resolve().parent.parent / "db" / "valuation.db"
 RUN_DB = Path(os.environ.get("DB_PATH", "valuation.db"))
+# 每日定时任务：刷新数据并把 SQLite 回传仓库做持久化（Token 只需 repo 权限）
+GH_TOKEN = os.environ.get("GH_TOKEN", "")
+GH_REPO = os.environ.get("GH_REPO", "koala62/index-valuation")
 
 app = FastAPI(title="指数估值看板", version="1.0.0")
 
@@ -54,6 +62,48 @@ def _compute_one(code: str) -> dict:
     return result
 
 
+def upload_db_to_github() -> str:
+    """把当前 SQLite 提交到仓库 db/valuation.db，供重启后恢复"""
+    if not GH_TOKEN:
+        return "skip:no_token"
+    if not RUN_DB.exists():
+        return "skip:no_db"
+    api = f"https://api.github.com/repos/{GH_REPO}/contents/db/valuation.db"
+    headers = {"Authorization": f"Bearer {GH_TOKEN}", "User-Agent": "index-valuation",
+               "Accept": "application/vnd.github+json"}
+    sha = None
+    try:
+        with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=30) as r:
+            sha = json.load(r).get("sha")
+    except Exception:
+        pass  # 文件尚不存在时直接新建
+    body = {"message": f"data: 每日估值数据刷新 {datetime.now():%Y-%m-%d}",
+            "content": base64.b64encode(RUN_DB.read_bytes()).decode()}
+    if sha:
+        body["sha"] = sha
+    req = urllib.request.Request(api, data=json.dumps(body).encode(), method="PUT",
+                                 headers={**headers, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=90) as r:
+        return f"ok:{json.load(r)['commit']['sha'][:7]}"
+
+
+def _daily_loop():
+    """每个工作日 18:05 后刷新一次并回传仓库；休眠唤醒后也会补做当天的任务"""
+    last_done = ""
+    while True:
+        now = datetime.now()
+        today = now.date().isoformat()
+        if now.weekday() < 5 and (now.hour, now.minute) >= (18, 5) and last_done != today:
+            try:
+                ds.refresh_all(force=True)
+                _mem_cache.clear()
+                upload_db_to_github()
+                last_done = today
+            except Exception:
+                time.sleep(600)   # 失败10分钟后重试
+        time.sleep(300)
+
+
 @app.on_event("startup")
 def startup():
     if not RUN_DB.exists() and SEED_DB.exists():
@@ -67,6 +117,7 @@ def startup():
             pass
         _mem_cache.clear()
     threading.Thread(target=warm, daemon=True).start()
+    threading.Thread(target=_daily_loop, daemon=True).start()
 
 
 @app.get("/api/indices")
