@@ -148,15 +148,38 @@ def _sina_close(sina_code: str) -> pd.DataFrame:
 
 
 STALE_SOURCE_DAYS = 30     # 行情源最新日期滞后超过该天数，视为断更
+CSI_KLINE = ("https://www.csindex.com.cn/csindex-home/perf/index-perf"
+             "?indexCode={code}&startDate=20150101&endDate={end}")
+CSI_HEADERS = {**UA, "Referer": "https://www.csindex.com.cn/"}
 
 
-def _close_series(meta: dict) -> pd.DataFrame:
+def _csindex_close(index_code: str) -> pd.DataFrame:
+    """中证指数官网日线收盘价（兜底源，覆盖中证全系含 H 开头代码）"""
+    if not index_code:
+        raise ValueError("无中证代码")
+    d = _get(CSI_KLINE.format(code=index_code, end=datetime.now().strftime("%Y%m%d")),
+             headers=CSI_HEADERS, retries=2)
+    rows = d.get("data") or []
+    if len(rows) <= 50:
+        raise ValueError(f"中证返回空数据: {index_code}")
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["tradeDate"], format="%Y%m%d").dt.strftime("%Y-%m-%d")
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    return df[["date", "close"]].dropna().sort_values("date").reset_index(drop=True)
+
+
+def _csindex_code(code: str) -> str:
+    """SH000922 -> 000922；CSIH30269 -> H30269"""
+    return code[3:] if code.startswith("CSI") else code[2:]
+
+
+def _close_series(code: str, meta: dict) -> pd.DataFrame:
     """
-    取收盘价序列：东财优先、新浪兜底。
-    两个源都成功时，选"结束日期最新、起始日期更早"的一份，
+    取收盘价序列：东财优先、新浪兜底、中证官网救援。
+    前两个源都成功时，选"结束日期最新、起始日期更早"的一份，
     防止某个源中途断更(如新浪中证红利只到2019)污染估值。
-    若最优源最新日期仍明显滞后(并发抓取被限流时东财可能临时失败、只剩断更的新浪)，
-    串行重试一轮；仍滞后则报错，宁可不写入也不落库失真数据。
+    若最优源最新日期仍明显滞后(东财偶发失败/被限流、新浪停更)，
+    先串行重试一轮，再用中证指数官网兜底；仍滞后则报错，不落库失真数据。
     """
     sources = [(fn, arg) for fn, arg in ((_em_close, meta.get("em")), (_sina_close, meta.get("sina")))
                if arg]
@@ -181,17 +204,21 @@ def _close_series(meta: dict) -> pd.DataFrame:
         return latest < pd.Timestamp.now().normalize() - pd.Timedelta(days=STALE_SOURCE_DAYS)
 
     cands = fetch_all()
-    if not cands:
-        raise ValueError(f"行情获取失败 ({', '.join(errors) or '无可用数据源'})")
-    best = best_of(cands)
-    if too_stale(best):
+    best = best_of(cands) if cands else None
+    if best is None or too_stale(best):
         time.sleep(1)
-        errors.clear()
-        cands = fetch_all()
-        if cands:
+        cands += fetch_all()
+        best = best_of(cands) if cands else None
+    if best is None or too_stale(best):
+        try:
+            cands.append(_csindex_close(_csindex_code(code)))
             best = best_of(cands)
-        if too_stale(best):
-            raise ValueError(f"行情数据中断，最新仅到 {best['date'].iloc[-1]}，暂不写入")
+        except Exception as e:  # noqa
+            errors.append(f"_csindex_close:{type(e).__name__}")
+    if best is None:
+        raise ValueError(f"行情获取失败 ({', '.join(errors) or '无可用数据源'})")
+    if too_stale(best):
+        raise ValueError(f"行情数据中断，最新仅到 {best['date'].iloc[-1]}，暂不写入")
     return best
 
 
@@ -201,7 +228,7 @@ def fetch_index(code: str) -> pd.DataFrame:
     pe = _danjuan_history(code, "pe")
     pb = _danjuan_history(code, "pb")
     df = pe.merge(pb, on="date", how="inner").rename(columns={"pe": "pe_ttm"})
-    close = _close_series(meta)
+    close = _close_series(code, meta)
     # 蛋卷为周频，按日期对齐最近一个交易日收盘价
     df["d"] = pd.to_datetime(df["date"])
     close["d"] = pd.to_datetime(close["date"])
