@@ -49,6 +49,9 @@ DCA_STOP, DCA_SPAN = 0.80, 0.50   # 定投系数: (0.80 - 综合分位) / 0.50
 DCA_MAX = 1.5              # 定投系数上限
 SELL_HOLD_WEEKS = 4        # 综合分位连续处于高估区的周数阈值，达到则提示减仓
 SELL_LOOKBACK = 52         # 连续高估计数最多回看一年
+# 分批止盈档位: (触发分位, 建议累计减仓比例)。65% 档需连续4周确认，更高档位越极端越不需要等待
+SELL_TIER2, SELL_TIER3 = 0.75, 0.85
+SELL_REDUCE = {1: 0.25, 2: 0.50, 3: 1.00}
 
 
 @dataclass
@@ -84,6 +87,8 @@ class ValuationResult:
     dca: Optional[float] = None      # 定投系数 0~1.5
     high_weeks: int = 0              # 综合分位连续处于高估区的周数
     sell_signal: bool = False        # 连续 high_weeks >= SELL_HOLD_WEEKS，提示减仓
+    sell_tier: int = 0               # 止盈档位 0=无 1/2/3 对应 65%/75%/85%
+    reduce_pct: float = 0.0          # 建议累计减仓比例 0/0.25/0.5/1.0
 
     def to_dict(self):
         return asdict(self)
@@ -177,6 +182,21 @@ def high_streak(df: pd.DataFrame, w_pe: float, w_pb: float,
     return streak
 
 
+def sell_plan(composite: float, streak: int) -> tuple[int, float]:
+    """分批止盈：返回 (档位, 建议累计减仓比例)
+
+    65% 档容易假突破，需连续 SELL_HOLD_WEEKS 周确认；
+    75%/85% 越极端越不需要等待确认，直接升档。
+    """
+    if composite >= SELL_TIER3:
+        return 3, SELL_REDUCE[3]
+    if composite >= SELL_TIER2:
+        return 2, SELL_REDUCE[2]
+    if composite >= ZONE_HIGH and streak >= SELL_HOLD_WEEKS:
+        return 1, SELL_REDUCE[1]
+    return 0, 0.0
+
+
 def compute(symbol: str, name: str, df: pd.DataFrame,
             index_type: str = "balanced") -> ValuationResult:
     """
@@ -260,10 +280,14 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
     # 止盈侧：连续 N 周处于高估区才提示减仓，过滤刚触线又回落的假信号
     streak = high_streak(df, w_pe, w_pb)
     out_high_weeks = streak if data_ok else 0
-    sell_signal = bool(data_ok and streak >= SELL_HOLD_WEEKS)
+    tier, reduce_pct = sell_plan(composite, streak) if data_ok else (0, 0.0)
+    sell_signal = tier > 0
     if sell_signal:
-        note += (f"综合分位已连续 {streak} 周位于 {ZONE_HIGH:.0%} 以上的高估区间，"
-                 f"建议暂停定投并分批减仓（非一次性清仓）。")
+        note += (f"综合分位 {composite:.0%}，已连续 {streak} 周高于 {ZONE_HIGH:.0%}，"
+                 f"触发第 {tier} 档止盈：建议累计减仓 {reduce_pct:.0%}，"
+                 f"暂停定投，分2~3批执行而非一次性卖出。")
+        if tier == 3:
+            note += "已进入极端高估区，清仓后仅保留观察仓，等待分位回落再重新定投入场。"
 
     return ValuationResult(
         symbol=symbol, name=name,
@@ -293,6 +317,8 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         dca=dca,
         high_weeks=out_high_weeks,
         sell_signal=sell_signal,
+        sell_tier=tier,
+        reduce_pct=reduce_pct,
     )
 
 

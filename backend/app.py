@@ -9,6 +9,8 @@ GET  /                       网页版前端
 """
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 from pathlib import Path
 
@@ -21,6 +23,9 @@ import data_service as ds
 import valuation
 
 WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
+# 随仓库持久化的数据文件：容器重启后运行库被清空时，先从仓库副本恢复
+SEED_DB = Path(__file__).resolve().parent.parent / "db" / "valuation.db"
+RUN_DB = Path(os.environ.get("DB_PATH", "valuation.db"))
 
 app = FastAPI(title="指数估值看板", version="1.0.0")
 
@@ -51,6 +56,10 @@ def _compute_one(code: str) -> dict:
 
 @app.on_event("startup")
 def startup():
+    if not RUN_DB.exists() and SEED_DB.exists():
+        RUN_DB.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(SEED_DB, RUN_DB)
+
     def warm():
         try:
             ds.refresh_all(force=False)
@@ -81,7 +90,8 @@ def list_indices(category: str | None = None, zone: str | None = None,
             "pe_ttm", "pb", "pe_percentile", "pb_percentile", "earnings_g",
             "base_w_pe", "w_pe", "w_pb", "composite", "zone", "distorted",
             "history_years", "stale_days", "divergence", "roe", "roe_mean3",
-            "roe_percentile", "dca", "pe_norm", "high_weeks", "sell_signal")})
+            "roe_percentile", "dca", "pe_norm", "high_weeks", "sell_signal",
+            "sell_tier", "reduce_pct")})
     if zone and zone != "all":
         out = [x for x in out if x.get("zone") == zone]
     keys = {"composite": lambda x: x.get("composite") if x.get("composite") is not None else 9,
@@ -114,6 +124,15 @@ def refresh():
     result = ds.refresh_all(force=True)
     _mem_cache.clear()
     return {"data": result}
+
+
+@app.get("/api/admin/db")
+def download_db():
+    """下载当前 SQLite 数据库，供定时任务回传仓库做持久化"""
+    if not RUN_DB.exists():
+        raise HTTPException(404, "数据库尚未生成")
+    return FileResponse(RUN_DB, filename="valuation.db",
+                        media_type="application/octet-stream")
 
 
 @app.get("/")

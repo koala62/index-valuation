@@ -8,3 +8,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# 每日任务回传的估值数据库需要随仓库持久化
+!db/valuation.db
