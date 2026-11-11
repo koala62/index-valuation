@@ -349,24 +349,42 @@ function drawChart(history) {
     tip.style.left = left + "px";
     tip.style.top = top + "px";
   };
-  let dragging = false, moved = false, x0 = 0, y0 = 0;
+  let dragging = false, moved = false, x0 = 0, y0 = 0, hoverOff = false;
   svg.style.touchAction = "pan-y";
   svg.onpointerdown = ev => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     dragging = true; moved = false; x0 = ev.clientX; y0 = ev.clientY;
     try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
-    // 再次点按：隐藏浮层与光标；若继续拖动，move 里会重新定位显示
-    if (tip.style.display === "block") hide(); else showAt(ev);
   };
   svg.onpointermove = ev => {
-    if (!dragging) return;
+    if (!dragging) {
+      // 桌面鼠标悬停仍可查看；刚点击关闭浮层后暂时不随悬停弹出，移出曲线区即恢复
+      if (ev.pointerType === "mouse" && !hoverOff) showAt(ev);
+      return;
+    }
+    if (ev.pointerType === "mouse" && ev.buttons !== 1) { dragging = false; return; }
     if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;  // 忽略点按抖动
     moved = true;
     showAt(ev);
   };
-  const stop = () => { dragging = false; };
-  svg.onpointerup = stop;
-  svg.onpointercancel = stop;
+  svg.onpointerup = ev => {
+    if (!dragging) return;
+    dragging = false;
+    // 只有"点按"（未拖动）才在松手时切换浮层，拖动结束则停留在最后位置
+    if (!moved) {
+      if (tip.style.display === "block") { hide(); hoverOff = true; }
+      else { hoverOff = false; showAt(ev); }
+    }
+  };
+  svg.onpointerleave = () => { hoverOff = false; };
+  svg.onpointercancel = () => { dragging = false; };
+  svg.onlostpointercapture = () => { dragging = false; };
+  // 手机上连续两次点按会被浏览器当成"双击缩放"，导致页面缩放、后续手势被取消（曲线像卡死）。
+  // 点按（非拖动）时在 touchend 阻止默认行为，关闭双击缩放，保证第二次点按只是关浮层。
+  svg.addEventListener("touchend", ev => {
+    if (!moved) ev.preventDefault();
+  }, { passive: false });
+  svg.addEventListener("dblclick", ev => ev.preventDefault());
 }
 
 let rzTimer = null;
