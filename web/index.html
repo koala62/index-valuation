@@ -182,6 +182,7 @@ function renderGrid(list) {
       ${d.history_years && d.history_years < 8 ? `<div class="warn">⚠ 历史仅 ${d.history_years} 年，百分位参考意义有限</div>` : ""}
       ${d.stale_days > 20 ? `<div class="warn">⚠ 行情滞后 ${d.stale_days} 天</div>` : ""}
       ${d.distorted ? '<div class="warn">⚠ 盈利走弱致 PE 被动抬高，已边际下调 PE 权重</div>' : ""}
+      ${d.divergence === "pe_inflated" ? `<div class="warn">⚠ PE 分位 ${pct(d.pe_percentile)} 远高于 PB 分位 ${pct(d.pb_percentile)}，PE 虚高疑似失真，已下调 PE 权重</div>` : ""}
     `;
     grid.appendChild(card);
   });
