@@ -322,6 +322,7 @@ function drawChart(history) {
   // 点按/滑动显示该位置数值
   const cursor = svg.querySelector("#cursor");
   const tip = document.getElementById("tip");
+  const hide = () => { tip.style.display = "none"; cursor.style.display = "none"; };
   const showAt = ev => {
     const r = svg.getBoundingClientRect();
     if (!r.width) return;
@@ -355,6 +356,10 @@ function drawChart(history) {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     dragging = true; moved = false; x0 = ev.clientX; y0 = ev.clientY;
     try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    // 在按下瞬间就切换：浮层已显示则立刻关闭，不依赖后续的 up/cancel，
+    // 避免手机上手势被浏览器接管后永远收不到"第二次点按"。
+    if (tip.style.display === "block") { hide(); hoverOff = true; }
+    else { hoverOff = false; showAt(ev); }
   };
   svg.onpointermove = ev => {
     if (!dragging) {
@@ -363,27 +368,17 @@ function drawChart(history) {
       return;
     }
     if (ev.pointerType === "mouse" && ev.buttons !== 1) { dragging = false; return; }
-    if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;  // 忽略点按抖动
+    if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) return;  // 忽略点按抖动
     moved = true;
     showAt(ev);
   };
-  svg.onpointerup = ev => {
-    if (!dragging) return;
-    dragging = false;
-    // 只有"点按"（未拖动）才在松手时切换浮层，拖动结束则停留在最后位置
-    if (!moved) {
-      if (tip.style.display === "block") { hide(); hoverOff = true; }
-      else { hoverOff = false; showAt(ev); }
-    }
-  };
+  const stop = () => { dragging = false; };
+  svg.onpointerup = stop;
+  svg.onpointercancel = stop;
   svg.onpointerleave = () => { hoverOff = false; };
-  svg.onpointercancel = () => { dragging = false; };
-  svg.onlostpointercapture = () => { dragging = false; };
-  // 手机上连续两次点按会被浏览器当成"双击缩放"，导致页面缩放、后续手势被取消（曲线像卡死）。
-  // 点按（非拖动）时在 touchend 阻止默认行为，关闭双击缩放，保证第二次点按只是关浮层。
-  svg.addEventListener("touchend", ev => {
-    if (!moved) ev.preventDefault();
-  }, { passive: false });
+  // 手机上连续两次点按会被浏览器当成"双击缩放"，第二次点按的事件直接被吃掉（浮层关不掉、曲线像卡死）。
+  // 无论本次是点按还是拖动，都在 touchend 阻止默认行为，彻底关闭曲线区域的双击缩放。
+  svg.addEventListener("touchend", ev => ev.preventDefault(), { passive: false });
   svg.addEventListener("dblclick", ev => ev.preventDefault());
 }
 
