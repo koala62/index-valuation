@@ -87,18 +87,37 @@ def upload_db_to_github() -> str:
         return f"ok:{json.load(r)['commit']['sha'][:7]}"
 
 
+def _get_meta(key: str) -> str:
+    import sqlite3
+    with sqlite3.connect(RUN_DB) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else ""
+
+
+def _set_meta(key: str, value: str):
+    import sqlite3
+    with sqlite3.connect(RUN_DB) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, value))
+        conn.commit()
+
+
 def _daily_loop():
-    """每个工作日 18:05 后刷新一次并回传仓库；休眠唤醒后也会补做当天的任务"""
-    last_done = ""
+    """每个工作日 18:05 后刷新一次并回传仓库；休眠唤醒后也会补做当天的任务。
+
+    完成日期写在数据库里并随回传持久化：回传触发自动部署后，
+    新容器从仓库副本恢复时能看到"今天已跑过"，避免 提交→部署→再跑 的死循环。
+    """
     while True:
         now = datetime.now()
         today = now.date().isoformat()
-        if now.weekday() < 5 and (now.hour, now.minute) >= (18, 5) and last_done != today:
+        if now.weekday() < 5 and (now.hour, now.minute) >= (18, 5) and _get_meta("last_daily") != today:
             try:
                 ds.refresh_all(force=True)
                 _mem_cache.clear()
+                _set_meta("last_daily", today)
                 upload_db_to_github()
-                last_done = today
             except Exception:
                 time.sleep(600)   # 失败10分钟后重试
         time.sleep(300)
