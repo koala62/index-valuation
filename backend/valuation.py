@@ -47,6 +47,8 @@ DIVERGE_W_SHIFT = 0.20     # 背离时 PE 权重下调幅度
 MIN_HISTORY_YEARS = 3      # 历史不足3年不输出分位数字
 DCA_STOP, DCA_SPAN = 0.80, 0.50   # 定投系数: (0.80 - 综合分位) / 0.50
 DCA_MAX = 1.5              # 定投系数上限
+SELL_HOLD_WEEKS = 4        # 综合分位连续处于高估区的周数阈值，达到则提示减仓
+SELL_LOOKBACK = 52         # 连续高估计数最多回看一年
 
 
 @dataclass
@@ -80,6 +82,8 @@ class ValuationResult:
     roe_mean3: Optional[float] = None  # 近3年平均ROE
     roe_percentile: Optional[float] = None
     dca: Optional[float] = None      # 定投系数 0~1.5
+    high_weeks: int = 0              # 综合分位连续处于高估区的周数
+    sell_signal: bool = False        # 连续 high_weeks >= SELL_HOLD_WEEKS，提示减仓
 
     def to_dict(self):
         return asdict(self)
@@ -147,6 +151,30 @@ def zone_of(composite: float) -> str:
     if composite < ZONE_HIGH:
         return "合理偏高"
     return "高估"
+
+
+def high_streak(df: pd.DataFrame, w_pe: float, w_pb: float,
+                threshold: float = ZONE_HIGH, cap: int = SELL_LOOKBACK) -> int:
+    """从最新一期往回数，综合分位连续 ≥ 高估线的周数（最多回看 cap 周）
+
+    与曲线同口径：每期用截至当期的历史做滚动百分位，权重取当期权重。
+    用于过滤"刚触线又回落"的假信号，只有持续高估才提示减仓。
+    """
+    pe = df["pe_ttm"]
+    pb = df["pb"]
+    n = len(df)
+    streak = 0
+    for i in range(n - 1, max(19, n - 1 - cap), -1):
+        pe_hist = pe.iloc[: i + 1]
+        pb_hist = pb.iloc[: i + 1]
+        if len(pe_hist) < 20 or len(pb_hist) < 20:
+            break
+        c = w_pe * float((pe_hist <= pe.iloc[i]).mean()) + w_pb * float((pb_hist <= pb.iloc[i]).mean())
+        if c >= threshold:
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def compute(symbol: str, name: str, df: pd.DataFrame,
@@ -229,6 +257,14 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
     out_zone = zone_of(composite) if data_ok else "数据积累中"
     dca = round(min(DCA_MAX, max(0.0, (DCA_STOP - composite) / DCA_SPAN)), 2) if data_ok else None
 
+    # 止盈侧：连续 N 周处于高估区才提示减仓，过滤刚触线又回落的假信号
+    streak = high_streak(df, w_pe, w_pb)
+    out_high_weeks = streak if data_ok else 0
+    sell_signal = bool(data_ok and streak >= SELL_HOLD_WEEKS)
+    if sell_signal:
+        note += (f"综合分位已连续 {streak} 周位于 {ZONE_HIGH:.0%} 以上的高估区间，"
+                 f"建议暂停定投并分批减仓（非一次性清仓）。")
+
     return ValuationResult(
         symbol=symbol, name=name,
         index_type=index_type, type_label=type_label,
@@ -255,6 +291,8 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         roe_mean3=round(roe_mean3, 4),
         roe_percentile=None if pd.isna(roe_pct) else round(roe_pct, 4),
         dca=dca,
+        high_weeks=out_high_weeks,
+        sell_signal=sell_signal,
     )
 
 
