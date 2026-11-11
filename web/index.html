@@ -44,7 +44,7 @@
   select, input[type=search] { font-size: 12px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--text); font-family: inherit; }
   input[type=search] { width: 120px; }
   .count { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-  .detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-top: 16px; padding: 18px; }
+  .detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; grid-column: 1 / -1; padding: 18px; }
   .detail h2 { font-size: 16px; margin-bottom: 4px; }
   .detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
@@ -73,7 +73,6 @@
   <div class="filters" id="filters"></div>
   <div class="count" id="count"></div>
   <div class="grid" id="grid"><div class="empty">加载中…</div></div>
-  <div id="detailHost"></div>
 </div>
 
 <script>
@@ -164,6 +163,7 @@ function renderGrid(list) {
   list.forEach(d => {
     const card = document.createElement("div");
     card.className = "card" + (current === d.symbol ? " active" : "");
+    card.dataset.symbol = d.symbol;
     card.onclick = () => showDetail(d.symbol);
     const c = ZONE_COLOR[d.zone] || "#999";
     card.innerHTML = `
@@ -182,16 +182,29 @@ function renderGrid(list) {
     grid.appendChild(card);
   });
   if (!list.length) grid.innerHTML = '<div class="empty">没有符合筛选条件的指数</div>';
+  placeDetail();
 }
+
+let detailCache = null;
 
 async function showDetail(code) {
   current = code;
-  document.querySelectorAll(".card").forEach(c => c.classList.remove("active"));
+  apply();
   const res = await fetch("/api/indices/" + code);
   const d = await res.json();
-  apply();
+  if (current !== code) return;
+  detailCache = d;
+  placeDetail();
+}
+
+function placeDetail() {
+  document.querySelectorAll(".detail").forEach(n => n.remove());
+  if (!current || !detailCache || detailCache.symbol !== current) return;
+  const card = document.querySelector(`.card[data-symbol="${current}"]`);
+  if (!card) return;
+  const d = detailCache;
   const c = ZONE_COLOR[d.zone] || "#999";
-  document.getElementById("detailHost").innerHTML = `
+  card.insertAdjacentHTML("afterend", `
     <div class="detail">
       <h2>${d.name} <span style="color:${c}">${pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
       <div class="sub">${d.category_label} · ${d.type_label} · 近${d.history_years}年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
@@ -214,8 +227,12 @@ async function showDetail(code) {
         <div class="stat"><div class="k">PE基准→微调后</div><div class="v" style="font-size:14px">${pct(d.base_w_pe)} → ${pct(d.w_pe)}</div></div>
         <div class="stat"><div class="k">历史覆盖</div><div class="v" style="font-size:14px">${d.history_years} 年</div></div>
       </div>
-    </div>`;
+    </div>`);
   drawChart(d.history);
+  const el = card.nextElementSibling;
+  if (el && el.getBoundingClientRect().top > window.innerHeight - 120) {
+    window.scrollTo({ top: window.scrollY + card.getBoundingClientRect().top - 70, behavior: "smooth" });
+  }
 }
 
 function drawChart(history) {
