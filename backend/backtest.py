@@ -53,7 +53,8 @@ def simulate(df: pd.DataFrame, index_type: str) -> pd.DataFrame:
 
 def main():
     frames = []
-    for code, (name, _, itype) in ds.INDICES.items():
+    for code, meta in ds.INDICES.items():
+        name, itype = meta["name"], meta["type"]
         df = ds.load_series(code)
         if df is None or len(df) < MIN_POINTS:
             print(f"[跳过] {name}: 数据不足({0 if df is None else len(df)}期)")

@@ -30,6 +30,9 @@ import pandas as pd
 PTS_PER_YEAR = 52          # 数据为周频
 HISTORY_YEARS = 10
 
+# 分档阈值：按 OOS 未来3年收益校准（低估更严、高估下移）
+ZONE_LOW, ZONE_MID, ZONE_HIGH = 0.15, 0.40, 0.65
+
 # 指数类型 -> PE 基准权重
 BASE_W_PE = {"value": 0.35, "balanced": 0.50, "growth": 0.65}
 INDEX_TYPE_LABEL = {"value": "价值/周期型", "balanced": "均衡型", "growth": "成长型"}
@@ -41,6 +44,9 @@ NORM_YEARS = 3             # 正常化PE: 盈利取3年均值，平滑一次性�
 DIVERGE_GAP = 0.30         # PE/PB 分位背离阈值(百分点)
 DIVERGE_PE_MIN = 0.60      # PE 分位需高于此值才判定为"PE虚高"
 DIVERGE_W_SHIFT = 0.20     # 背离时 PE 权重下调幅度
+MIN_HISTORY_YEARS = 3      # 历史不足3年不输出分位数字
+DCA_STOP, DCA_SPAN = 0.80, 0.50   # 定投系数: (0.80 - 综合分位) / 0.50
+DCA_MAX = 1.5              # 定投系数上限
 
 
 @dataclass
@@ -61,15 +67,19 @@ class ValuationResult:
     base_w_pe: float              # 类型基准PE权重
     w_pe: float                   # 微调后PE权重
     w_pb: float
-    composite: float              # 综合百分位 0~1
-    zone: str                     # 低估/合理偏低/合理偏高/高估
+    composite: Optional[float]      # 综合百分位 0~1；历史不足3年时为 None
+    zone: str                     # 低估/合理偏低/合理偏高/高估/数据积累中
     distorted: bool               # 是否存在盈利下滑导致的PE失真
     history_years: float = 0.0    # 历史覆盖年数
     stale_days: int = 0           # 行情滞后天数
     note: str = ""
     history: list = field(default_factory=list)  # 综合百分位历史(采样)
     pe_norm: Optional[float] = None  # 正常化PE(3年平滑盈利)
-    divergence: str = ""  # pe_inflated: PE分位高而PB分位低，判定PE虚高
+    divergence: str = ""  # pe_inflated: 判定失真并调权; pe_watch: 背离但ROE未恶化
+    roe: Optional[float] = None      # 隐含ROE = PB/PE
+    roe_mean3: Optional[float] = None  # 近3年平均ROE
+    roe_percentile: Optional[float] = None
+    dca: Optional[float] = None      # 定投系数 0~1.5
 
     def to_dict(self):
         return asdict(self)
@@ -92,6 +102,14 @@ def normalized_pe(df: pd.DataFrame, years: int = NORM_YEARS) -> pd.Series:
     e = e.replace([math.inf, -math.inf], float("nan"))
     e_s = e.rolling(years * PTS_PER_YEAR, min_periods=PTS_PER_YEAR).mean()
     return df["close"] / e_s
+
+
+def implied_roe(df: pd.DataFrame) -> pd.Series:
+    """隐含ROE = PB / PE（= B/E 的倒数），衡量净资产盈利能力"""
+    pe = pd.to_numeric(df["pe_ttm"], errors="coerce")
+    pb = pd.to_numeric(df["pb"], errors="coerce")
+    roe = pb / pe
+    return roe.replace([math.inf, -math.inf], float("nan"))
 
 
 def earnings_growth(e: pd.Series) -> tuple[Optional[float], Optional[float], Optional[float]]:
@@ -122,11 +140,11 @@ def dynamic_weights(g: Optional[float], base_w_pe: float) -> tuple[float, float]
 
 
 def zone_of(composite: float) -> str:
-    if composite < 0.20:
+    if composite < ZONE_LOW:
         return "低估"
-    if composite < 0.50:
+    if composite < ZONE_MID:
         return "合理偏低"
-    if composite < 0.80:
+    if composite < ZONE_HIGH:
         return "合理偏高"
     return "高估"
 
@@ -154,14 +172,24 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
 
     composite = w_pe * pe_pct + w_pb * pb_pct
 
+    # 隐含 ROE = PB / PE，用于校验背离是"盈利暂时波动"还是"资产质量恶化"
+    roe = implied_roe(df)
+    roe_now = float(roe.iloc[-1]) if pd.notna(roe.iloc[-1]) else None
+    roe_mean3 = float(roe.iloc[-3 * PTS_PER_YEAR:].mean())
+    roe_pct = _percentile_of(roe, roe_now) if roe_now is not None else float("nan")
+
     # PE/PB 分位背离检测：PE 高而 PB 低，多半是盈利下滑把 PE 抬起来了
     divergence = ""
+    base_w = w_pe
     if pe_pct - pb_pct >= DIVERGE_GAP and pe_pct >= DIVERGE_PE_MIN:
-        divergence = "pe_inflated"
-        base_w = w_pe
-        w_pe = max(W_PE_MIN, round(w_pe - DIVERGE_W_SHIFT, 3))
-        w_pb = round(1 - w_pe, 3)
-        composite = w_pe * pe_pct + w_pb * pb_pct
+        if roe_now is not None and roe_now >= roe_mean3:
+            # ROE 未恶化：更可能是盈利阶段性波动，不下调权重
+            divergence = "pe_watch"
+        else:
+            divergence = "pe_inflated"
+            w_pe = max(W_PE_MIN, round(w_pe - DIVERGE_W_SHIFT, 3))
+            w_pb = round(1 - w_pe, 3)
+            composite = w_pe * pe_pct + w_pb * pb_pct
 
     note = ""
     span_years = (pd.to_datetime(df["date"].iloc[-1]) - pd.to_datetime(df["date"].iloc[0])).days / 365
@@ -188,9 +216,18 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
     if divergence == "pe_inflated":
         note += (f"PE 分位 {pe_pct:.0%} 远高于 PB 分位 {pb_pct:.0%}，"
                  f"PE 偏高更可能来自盈利下滑而非股价透支，已将 PE 权重由 {base_w:.0%} 下调至 {w_pe:.0%}。")
+    elif divergence == "pe_watch":
+        note += (f"PE 分位 {pe_pct:.0%} 高于 PB 分位 {pb_pct:.0%}，但隐含 ROE {roe_now:.1%} 不低于近3年均值 "
+                 f"{roe_mean3:.1%}，倾向盈利阶段性波动，未下调 PE 权重。")
 
     # 综合百分位历史（用于走势图）：用当期权重近似全历史
     history = _composite_history(df, w_pe, w_pb, pe_norm)
+
+    # 冷启动硬约束：不足3年不出分位数字
+    data_ok = span_years >= MIN_HISTORY_YEARS
+    out_composite = round(composite, 4) if data_ok else None
+    out_zone = zone_of(composite) if data_ok else "数据积累中"
+    dca = round(min(DCA_MAX, max(0.0, (DCA_STOP - composite) / DCA_SPAN)), 2) if data_ok else None
 
     return ValuationResult(
         symbol=symbol, name=name,
@@ -205,8 +242,8 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         earnings_g1=None if g1 is None else round(g1, 4),
         earnings_g3=None if g3 is None else round(g3, 4),
         base_w_pe=base, w_pe=w_pe, w_pb=w_pb,
-        composite=round(composite, 4),
-        zone=zone_of(composite),
+        composite=out_composite,
+        zone=out_zone,
         distorted=distorted,
         history_years=round(span_years, 1),
         stale_days=stale_days,
@@ -214,6 +251,10 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         history=history,
         pe_norm=None if pe_norm_val is None else round(pe_norm_val, 2),
         divergence=divergence,
+        roe=None if roe_now is None else round(roe_now, 4),
+        roe_mean3=round(roe_mean3, 4),
+        roe_percentile=None if pd.isna(roe_pct) else round(roe_pct, 4),
+        dca=dca,
     )
 
 
