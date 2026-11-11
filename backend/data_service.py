@@ -244,18 +244,23 @@ def is_stale(code: str) -> bool:
     return datetime.fromisoformat(ts).date() < date.today()
 
 
-def _refresh_one(code: str, force: bool) -> str:
+def _refresh_one(code: str, force: bool, attempts: int = 2) -> str:
     if not force and not is_stale(code):
         return "skip"
-    try:
-        df = fetch_index(code)
-        save_series(code, df)
-        return f"ok({len(df)})"
-    except Exception as e:  # noqa
-        return f"err:{type(e).__name__}:{str(e)[:80]}"
+    last: Exception | None = None
+    for k in range(attempts):
+        try:
+            df = fetch_index(code)
+            save_series(code, df)
+            return f"ok({len(df)})"
+        except Exception as e:  # noqa
+            last = e
+            if k + 1 < attempts:
+                time.sleep(2 + 2 * k)   # 东财短时限流时退避重试
+    return f"err:{type(last).__name__}:{str(last)[:80]}"
 
 
-def refresh_all(force: bool = False, max_workers: int = 6) -> dict:
+def refresh_all(force: bool = False, max_workers: int = 3) -> dict:
     """并发刷新全部指数，返回 {code: 'ok'|'skip'|error}"""
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {code: pool.submit(_refresh_one, code, force) for code in INDICES}
