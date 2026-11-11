@@ -221,6 +221,7 @@ function placeDetail() {
       <div class="chart-box"><svg id="chart"></svg><div id="tip" class="tip"></div></div>
       <div class="legend">
         <span><i style="background:#3b6ef0"></i>综合百分位</span>
+        <span><i style="background:#e08a2e"></i>正常化PE口径</span>
         <span><i style="background:#c9d2e0"></i>指数点位(右轴)</span>
         <span><i style="background:var(--low)"></i>低估线 20%</span>
         <span><i style="background:var(--high)"></i>高估线 80%</span>
@@ -228,6 +229,7 @@ function placeDetail() {
       ${d.note ? `<div class="warn" style="margin-top:12px">⚠ ${d.note}</div>` : ""}
       <div class="stats">
         <div class="stat"><div class="k">PE(TTM)</div><div class="v">${d.pe_ttm}</div></div>
+        <div class="stat"><div class="k">正常化PE(3年盈利)</div><div class="v">${d.pe_norm == null ? "--" : d.pe_norm}</div></div>
         <div class="stat"><div class="k">PE 百分位</div><div class="v">${pct(d.pe_percentile)}</div></div>
         <div class="stat"><div class="k">PB</div><div class="v">${d.pb}</div></div>
         <div class="stat"><div class="k">PB 百分位</div><div class="v">${pct(d.pb_percentile)}</div></div>
@@ -273,6 +275,12 @@ function drawChart(history) {
   // 点位曲线
   s += `<polyline fill="none" stroke="#c9d2e0" stroke-width="1.5" points="` +
     history.map((h, i) => `${xs(i).toFixed(1)},${yc(h.close).toFixed(1)}`).join(" ") + `"/>`;
+  // 正常化口径参考线（虚线）
+  const normPts = history.map((h, i) => h.composite_norm == null ? null : `${xs(i).toFixed(1)},${ys(h.composite_norm).toFixed(1)}`)
+    .filter(Boolean).join(" ");
+  if (normPts) {
+    s += `<polyline fill="none" stroke="#e08a2e" stroke-width="1.6" stroke-dasharray="5 4" points="${normPts}"/>`;
+  }
   // 综合百分位曲线
   s += `<polyline fill="none" stroke="#3b6ef0" stroke-width="2" points="` +
     history.map((h, i) => `${xs(i).toFixed(1)},${ys(h.composite).toFixed(1)}`).join(" ") + `"/>`;
@@ -314,7 +322,9 @@ function drawChart(history) {
       `<line x1="${x}" x2="${x}" y1="${PT}" y2="${H - PB_}" stroke="#3b6ef0" stroke-dasharray="3 3" stroke-width="1"/>` +
       `<circle cx="${x}" cy="${y}" r="3.5" fill="#3b6ef0"/>`;
     cursor.style.display = "";
-    tip.innerHTML = `<div>${h.date}</div><div>综合 ${(h.composite * 100).toFixed(1)}%</div><div>点位 ${Math.round(h.close)}</div>`;
+    tip.innerHTML = `<div>${h.date}</div><div>综合 ${(h.composite * 100).toFixed(1)}%</div>` +
+      (h.composite_norm == null ? "" : `<div>正常化 ${(h.composite_norm * 100).toFixed(1)}%</div>`) +
+      `<div>点位 ${Math.round(h.close)}</div>`;
     tip.style.display = "block";
     const sx = r.width / W;
     const tw = tip.offsetWidth, th = tip.offsetHeight;

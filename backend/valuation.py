@@ -37,6 +37,7 @@ G_ADJUST_MAX = 0.12        # g 对权重的最大边际调整幅度
 G_CAP = 0.25               # 参与调权的 g 封顶
 W_PE_MIN, W_PE_MAX = 0.20, 0.80
 SMOOTH_W1, SMOOTH_W3 = 0.4, 0.6   # 1年同比 / 3年CAGR 平滑系数
+NORM_YEARS = 3             # 正常化PE: 盈利取3年均值，平滑一次性减值/周期波动
 
 
 @dataclass
@@ -64,6 +65,7 @@ class ValuationResult:
     stale_days: int = 0           # 行情滞后天数
     note: str = ""
     history: list = field(default_factory=list)  # 综合百分位历史(采样)
+    pe_norm: Optional[float] = None  # 正常化PE(3年平滑盈利)
 
     def to_dict(self):
         return asdict(self)
@@ -75,6 +77,17 @@ def _percentile_of(series: pd.Series, value: float) -> float:
     if len(s) < 20:
         return float("nan")
     return float((s <= value).mean())
+
+
+def normalized_pe(df: pd.DataFrame, years: int = NORM_YEARS) -> pd.Series:
+    """
+    正常化PE = 点位 / 近3年平均盈利
+    用于剔除一次性减值、周期底部等因素导致的 PE 被动跳变
+    """
+    e = pd.to_numeric(df["close"] / df["pe_ttm"], errors="coerce").astype(float)
+    e = e.replace([math.inf, -math.inf], float("nan"))
+    e_s = e.rolling(years * PTS_PER_YEAR, min_periods=PTS_PER_YEAR).mean()
+    return df["close"] / e_s
 
 
 def earnings_growth(e: pd.Series) -> tuple[Optional[float], Optional[float], Optional[float]]:
@@ -124,6 +137,7 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         raise ValueError(f"{name} 有效数据不足: {len(df)}")
 
     cur = df.iloc[-1]
+    pe_norm = normalized_pe(df)
     pe_pct = _percentile_of(df["pe_ttm"], cur["pe_ttm"])
     pb_pct = _percentile_of(df["pb"], cur["pb"])
 
@@ -150,8 +164,15 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
     elif g is not None and g > 0.1:
         note += f"平滑盈利增速 {g:+.1%} 向好，PE 权重在基准 {base:.0%} 上微调至 {w_pe:.0%}"
 
+    pe_norm_val = float(pe_norm.iloc[-1]) if pd.notna(pe_norm.iloc[-1]) else None
+    if pe_norm_val and cur["pe_ttm"] > 0:
+        gap = pe_norm_val / float(cur["pe_ttm"]) - 1
+        if gap < -0.2:
+            note += (f"正常化PE {pe_norm_val:.1f} 明显低于原始PE {cur['pe_ttm']:.1f}（{gap:+.0%}），"
+                     f"说明近3年盈利被一次性因素压低、PE 被动抬高；图中橙色虚线为正常化口径参考。")
+
     # 综合百分位历史（用于走势图）：用当期权重近似全历史
-    history = _composite_history(df, w_pe, w_pb)
+    history = _composite_history(df, w_pe, w_pb, pe_norm)
 
     return ValuationResult(
         symbol=symbol, name=name,
@@ -173,12 +194,20 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         stale_days=stale_days,
         note=note,
         history=history,
+        pe_norm=None if pe_norm_val is None else round(pe_norm_val, 2),
     )
 
 
-def _composite_history(df: pd.DataFrame, w_pe: float, w_pb: float, step: int = 5) -> list:
-    """滚动综合百分位历史（全历史区间），按期采样以控制体积"""
-    pe, pb = df["pe_ttm"], df["pb"]
+def _composite_history(df: pd.DataFrame, w_pe: float, w_pb: float,
+                       pe_norm: pd.Series, step: int = 5) -> list:
+    """滚动综合百分位历史（全历史区间），按期采样以控制体积
+
+    主口径：原始 PE_TTM + PB 的滚动百分位（与当前估值一致）；
+    另附 composite_norm：PE 改用3年平滑盈利的正常化口径，作为参考线，
+    用于识别一次性减值等造成的估值尖峰（不改变主口径数值）。
+    """
+    pb = df["pb"]
+    pe = df["pe_ttm"]
     dates = df["date"]
     out = []
     n = len(df)
@@ -186,11 +215,21 @@ def _composite_history(df: pd.DataFrame, w_pe: float, w_pb: float, step: int = 5
     if idxs and idxs[-1] != n - 1:
         idxs.append(n - 1)
     for i in idxs:
-        pe_pct = (pe.iloc[: i + 1] <= pe.iloc[i]).mean()
-        pb_pct = (pb.iloc[: i + 1] <= pb.iloc[i]).mean()
-        out.append({
+        pb_hist = pb.iloc[: i + 1].dropna()
+        pe_hist = pe.iloc[: i + 1].dropna()
+        if len(pb_hist) < 20 or len(pe_hist) < 20:
+            continue
+        pe_pct = (pe_hist <= pe.iloc[i]).mean()
+        pb_pct = (pb_hist <= pb.iloc[i]).mean()
+        row = {
             "date": str(dates.iloc[i])[:10],
             "composite": round(w_pe * pe_pct + w_pb * pb_pct, 4),
             "close": round(float(df["close"].iloc[i]), 2),
-        })
+        }
+        # 正常化口径（参考线）：仅用于识别一次性利润波动，不改变主口径
+        pn_hist = pe_norm.iloc[: i + 1].dropna()
+        if len(pn_hist) >= 20 and pd.notna(pe_norm.iloc[i]):
+            pn_pct = (pn_hist <= pe_norm.iloc[i]).mean()
+            row["composite_norm"] = round(w_pe * pn_pct + w_pb * pb_pct, 4)
+        out.append(row)
     return out
