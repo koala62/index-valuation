@@ -49,7 +49,7 @@
   .detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
-  #chart { width: 100%; height: 320px; }
+  #chart { display: block; width: 100%; height: 240px; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
   .stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
   .stat .k { font-size: 12px; color: var(--muted); }
@@ -208,7 +208,7 @@ function placeDetail() {
     <div class="detail">
       <h2>${d.name} <span style="color:${c}">${pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
       <div class="sub">${d.category_label} · ${d.type_label} · 近${d.history_years}年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
-      <svg id="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+      <svg id="chart"></svg>
       <div class="legend">
         <span><i style="background:#3b6ef0"></i>综合百分位</span>
         <span><i style="background:#c9d2e0"></i>指数点位(右轴)</span>
@@ -237,9 +237,14 @@ function placeDetail() {
 
 function drawChart(history) {
   const svg = document.getElementById("chart");
-  const W = 900, H = 320, PL = 42, PR = 46, PT = 14, PB_ = 30;
+  const W = Math.max(320, Math.round(svg.clientWidth || 900));
+  const H = Math.min(280, Math.max(170, Math.round(W * 0.34)));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.height = H + "px";
+  const PL = 42, PR = 46, PT = 14, PB_ = 30;
   const iw = W - PL - PR, ih = H - PT - PB_;
   const n = history.length;
+  if (n < 2) { svg.innerHTML = ""; return; }
   const xs = i => PL + (i / (n - 1)) * iw;
   const ys = v => PT + (1 - v) * ih;
   const closes = history.map(h => h.close);
@@ -277,6 +282,15 @@ function drawChart(history) {
   });
   svg.innerHTML = s;
 }
+
+let rzTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(() => {
+    const svg = document.getElementById("chart");
+    if (svg && detailCache) drawChart(detailCache.history);
+  }, 150);
+});
 
 async function refreshData() {
   if (!confirm("从数据源重新拉取全部指数数据，约需1分钟，继续？")) return;
