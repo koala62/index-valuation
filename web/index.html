@@ -50,6 +50,10 @@
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
   #chart { display: block; width: 100%; height: 240px; }
+  .chart-box { position: relative; }
+  .tip { position: absolute; display: none; pointer-events: none; z-index: 3; background: #fff; color: #111827;
+    border: 1px solid #ccd3de; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.2);
+    padding: 6px 9px; font-size: 12px; line-height: 18px; white-space: nowrap; font-weight: 600; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
   .stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
   .stat .k { font-size: 12px; color: var(--muted); }
@@ -214,7 +218,7 @@ function placeDetail() {
     <div class="detail">
       <h2>${d.name} <span style="color:${c}">${pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
       <div class="sub">${d.category_label} · ${d.type_label} · 近${d.history_years}年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
-      <svg id="chart"></svg>
+      <div class="chart-box"><svg id="chart"></svg><div id="tip" class="tip"></div></div>
       <div class="legend">
         <span><i style="background:#3b6ef0"></i>综合百分位</span>
         <span><i style="background:#c9d2e0"></i>指数点位(右轴)</span>
@@ -294,27 +298,33 @@ function drawChart(history) {
   [cMin, (cMin + cMax) / 2, cMax].forEach(v => {
     s += `<text x="${W - PR + 6}" y="${yc(v) + 4}" font-size="11" fill="#aab">${Math.round(v)}</text>`;
   });
-  svg.innerHTML = s + `<g id="tip" style="display:none"></g>`;
+  svg.innerHTML = s + `<g id="cursor" style="display:none"></g>`;
 
   // 点按/滑动显示该位置数值
-  const tip = svg.querySelector("#tip");
+  const cursor = svg.querySelector("#cursor");
+  const tip = document.getElementById("tip");
   const showAt = ev => {
     const r = svg.getBoundingClientRect();
     if (!r.width) return;
     const px = (ev.clientX - r.left) * (W / r.width);
     let i = Math.round(((Math.min(Math.max(px, PL), W - PR)) - PL) / iw * (n - 1));
     i = Math.max(0, Math.min(n - 1, i));
-    const h = history[i], x = xs(i);
-    const lines = [h.date, `综合 ${(h.composite * 100).toFixed(1)}%`, `点位 ${Math.round(h.close)}`];
-    const bw = 122, lh = 18, bh = lh * lines.length + 12;
-    let bx = x + 10; if (bx + bw > W - 4) bx = x - bw - 10; if (bx < 2) bx = 2;
-    const by = Math.max(2, Math.min(H - bh - 2, ys(h.composite) - bh - 10));
-    tip.innerHTML =
+    const h = history[i], x = xs(i), y = ys(h.composite);
+    cursor.innerHTML =
       `<line x1="${x}" x2="${x}" y1="${PT}" y2="${H - PB_}" stroke="#3b6ef0" stroke-dasharray="3 3" stroke-width="1"/>` +
-      `<circle cx="${x}" cy="${ys(h.composite)}" r="3.5" fill="#3b6ef0"/>` +
-      `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" fill="#12161e" fill-opacity="0.95" stroke="#3b6ef0" stroke-opacity="0.6"/>` +
-      lines.map((t, k) => `<text x="${bx + 10}" y="${by + 20 + k * lh}" font-size="12" font-weight="600" fill="#ffffff" font-family="-apple-system,PingFang SC,sans-serif">${t}</text>`).join("");
-    tip.style.display = "";
+      `<circle cx="${x}" cy="${y}" r="3.5" fill="#3b6ef0"/>`;
+    cursor.style.display = "";
+    tip.innerHTML = `<div>${h.date}</div><div>综合 ${(h.composite * 100).toFixed(1)}%</div><div>点位 ${Math.round(h.close)}</div>`;
+    tip.style.display = "block";
+    const sx = r.width / W;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x * sx + 12;
+    if (left + tw > r.width - 2) left = x * sx - tw - 12;
+    if (left < 2) left = 2;
+    let top = y - th - 12;
+    if (top < 2) top = Math.min(y + 14, H - th - 2);
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
   };
   svg.onpointerdown = showAt;
   svg.onpointermove = ev => { if (ev.pointerType === "mouse") showAt(ev); };
