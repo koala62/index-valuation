@@ -1,0 +1,4 @@
+page { background: #f4f6f9; font-family: -apple-system, "PingFang SC", sans-serif; }
+.card { background: #fff; border-radius: 20rpx; padding: 24rpx 28rpx; margin: 16rpx 24rpx; }
+.row { display: flex; justify-content: space-between; align-items: center; }
+.muted { color: #8a919e; font-size: 22rpx; }

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: index-valuation
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: TZ
+        value: Asia/Shanghai
+      - key: DB_PATH
+        value: /tmp/valuation.db

@@ -1,0 +1,26 @@
+<view class="header">
+  <view class="title">指数估值看板</view>
+  <view class="muted">PE/PB 近10年百分位 · 盈利下滑动态权重修正</view>
+  <view class="muted">{{dateInfo}}</view>
+</view>
+
+<view wx:if="{{loading}}" class="empty">加载中…</view>
+<view wx:elif="{{list.length === 0}}" class="empty">暂无数据，请确认后端服务已启动</view>
+
+<view wx:for="{{list}}" wx:key="symbol" class="card" data-code="{{item.symbol}}" bindtap="goDetail">
+  <view class="row">
+    <text class="name">{{item.name}}</text>
+    <text class="zone" style="background:{{item.zoneColor}}">{{item.zone}}</text>
+  </view>
+  <view class="composite" style="color:{{item.zoneColor}}">{{item.compositePct}}%<text class="c-label">综合百分位</text></view>
+  <view class="gauge"><view class="pin" style="left:{{item.pinLeft}}%"></view></view>
+  <view class="row muted line">
+    <text>PE {{item.pe_ttm}} · <text class="num">{{item.pePct}}%</text></text>
+    <text>PB {{item.pb}} · <text class="num">{{item.pbPct}}%</text></text>
+  </view>
+  <view class="row muted line">
+    <text>权重 PE <text class="num">{{item.wPePct}}%</text> / PB <text class="num">{{item.wPbPct}}%</text></text>
+    <text>盈利增速 <text class="num">{{item.yoyText}}</text></text>
+  </view>
+  <view wx:if="{{item.distorted}}" class="warn">⚠ 盈利走弱致 PE 被动抬高，已边际下调 PE 权重</view>
+</view>

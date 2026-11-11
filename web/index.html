@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>指数估值看板 · PE/PB 十年百分位</title>
+<style>
+  :root {
+    --low: #2e9e5b; --mid-low: #7cb342; --mid-high: #f0a030; --high: #d9453a;
+    --bg: #f4f6f9; --card: #fff; --text: #1f2329; --muted: #8a919e; --line: #e8ebf0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 8px; }
+  h1 { font-size: 20px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #eef1f5; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: box-shadow .15s; border: 1px solid var(--line); }
+  .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.07); }
+  .card.active { outline: 2px solid #3b6ef0; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .name { font-size: 15px; font-weight: 600; }
+  .zone { font-size: 12px; padding: 2px 8px; border-radius: 10px; color: #fff; }
+  .composite { font-size: 30px; font-weight: 700; margin: 6px 0 2px; }
+  .composite small { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+  .gauge { height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--low) 0 20%, var(--mid-low) 20% 50%, var(--mid-high) 50% 80%, var(--high) 80% 100%); position: relative; margin: 8px 0 4px; opacity: .35; }
+  .gauge .pin { position: absolute; top: -3px; width: 4px; height: 14px; background: #1f2329; border-radius: 2px; transform: translateX(-2px); }
+  .row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .row b { color: var(--text); font-weight: 600; }
+  .warn { margin-top: 8px; font-size: 12px; color: #b26a00; background: #fdf3e0; border-radius: 8px; padding: 6px 8px; line-height: 1.5; }
+  .type-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 1px 6px; font-weight: 400; }
+  .detail { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-top: 16px; padding: 18px; }
+  .detail h2 { font-size: 16px; margin-bottom: 4px; }
+  .detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+  #chart { width: 100%; height: 320px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
+  .stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .stat .k { font-size: 12px; color: var(--muted); }
+  .stat .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; font-size: 14px; }
+  @media (max-width: 640px) { .composite { font-size: 26px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>指数估值看板</h1>
+      <div class="meta" id="meta">PE/PB 近10年百分位 · 盈利下滑动态权重修正</div>
+    </div>
+    <div>
+      <span class="meta" id="dateInfo"></span>
+      <button onclick="refreshData()">刷新数据</button>
+    </div>
+  </header>
+  <div class="grid" id="grid"><div class="empty">加载中…</div></div>
+  <div id="detailHost"></div>
+</div>
+
+<script>
+const ZONE_COLOR = { "低估": "var(--low)", "合理偏低": "var(--mid-low)", "合理偏高": "var(--mid-high)", "高估": "var(--high)" };
+const pct = v => (v * 100).toFixed(1) + "%";
+let current = null, lastList = [];
+
+async function load() {
+  const res = await fetch("/api/indices");
+  const { data } = await res.json();
+  lastList = data.filter(d => !d.error);
+  document.getElementById("dateInfo").textContent = lastList.length ? "数据日期 " + lastList[0].date : "";
+  renderGrid(lastList);
+  if (lastList.length && !current) showDetail(lastList[0].symbol);
+}
+
+function renderGrid(list) {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  list.forEach(d => {
+    const card = document.createElement("div");
+    card.className = "card" + (current === d.symbol ? " active" : "");
+    card.onclick = () => showDetail(d.symbol);
+    const c = ZONE_COLOR[d.zone] || "#999";
+    card.innerHTML = `
+      <div class="card-head"><span class="name">${d.name} <small class="type-tag">${d.type_label}</small></span>
+        <span class="zone" style="background:${c}">${d.zone}</span></div>
+      <div class="composite" style="color:${c}">${pct(d.composite)}<small>综合百分位</small></div>
+      <div class="gauge"><div class="pin" style="left:${d.composite * 100}%"></div></div>
+      <div class="row"><span>PE ${d.pe_ttm} · 百分位 <b>${pct(d.pe_percentile)}</b></span>
+        <span>PB ${d.pb} · 百分位 <b>${pct(d.pb_percentile)}</b></span></div>
+      <div class="row"><span>权重 PE <b>${pct(d.w_pe)}</b> / PB <b>${pct(d.w_pb)}</b></span>
+        <span>盈利增速 <b>${d.earnings_g == null ? "--" : (d.earnings_g * 100).toFixed(1) + "%"}</b></span></div>
+      ${d.distorted ? '<div class="warn">⚠ 盈利走弱致 PE 被动抬高，已边际下调 PE 权重</div>' : ""}
+    `;
+    grid.appendChild(card);
+  });
+  if (!list.length) grid.innerHTML = '<div class="empty">暂无数据，请点击右上角「刷新数据」</div>';
+}
+
+async function showDetail(code) {
+  current = code;
+  document.querySelectorAll(".card").forEach(c => c.classList.remove("active"));
+  const res = await fetch("/api/indices/" + code);
+  const d = await res.json();
+  renderGrid(lastList);
+  const c = ZONE_COLOR[d.zone] || "#999";
+  document.getElementById("detailHost").innerHTML = `
+    <div class="detail">
+      <h2>${d.name} <span style="color:${c}">${pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
+      <div class="sub">近10年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
+      <svg id="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+      <div class="legend">
+        <span><i style="background:#3b6ef0"></i>综合百分位</span>
+        <span><i style="background:#c9d2e0"></i>指数点位(右轴)</span>
+        <span><i style="background:var(--low)"></i>低估线 20%</span>
+        <span><i style="background:var(--high)"></i>高估线 80%</span>
+      </div>
+      ${d.note ? `<div class="warn" style="margin-top:12px">⚠ ${d.note}</div>` : ""}
+      <div class="stats">
+        <div class="stat"><div class="k">PE(TTM)</div><div class="v">${d.pe_ttm}</div></div>
+        <div class="stat"><div class="k">PE 百分位</div><div class="v">${pct(d.pe_percentile)}</div></div>
+        <div class="stat"><div class="k">PB</div><div class="v">${d.pb}</div></div>
+        <div class="stat"><div class="k">PB 百分位</div><div class="v">${pct(d.pb_percentile)}</div></div>
+        <div class="stat"><div class="k">平滑盈利增速</div><div class="v" style="color:${d.earnings_g < 0 ? "var(--high)" : "var(--low)"}">${d.earnings_g == null ? "--" : (d.earnings_g * 100).toFixed(1) + "%"}</div></div>
+        <div class="stat"><div class="k">收盘点位</div><div class="v">${d.close}</div></div>
+        <div class="stat"><div class="k">指数类型</div><div class="v" style="font-size:14px">${d.type_label}</div></div>
+        <div class="stat"><div class="k">PE基准→微调后</div><div class="v" style="font-size:14px">${pct(d.base_w_pe)} → ${pct(d.w_pe)}</div></div>
+      </div>
+    </div>`;
+  drawChart(d.history);
+}
+
+function drawChart(history) {
+  const svg = document.getElementById("chart");
+  const W = 900, H = 320, PL = 42, PR = 46, PT = 14, PB_ = 30;
+  const iw = W - PL - PR, ih = H - PT - PB_;
+  const n = history.length;
+  const xs = i => PL + (i / (n - 1)) * iw;
+  const ys = v => PT + (1 - v) * ih;
+  const closes = history.map(h => h.close);
+  const cMin = Math.min(...closes), cMax = Math.max(...closes);
+  const yc = v => PT + (1 - (v - cMin) / (cMax - cMin || 1)) * ih;
+
+  let s = "";
+  // 背景分区
+  const bands = [[0, .2, "rgba(46,158,91,.07)"], [.2, .5, "rgba(124,179,66,.05)"], [.5, .8, "rgba(240,160,48,.06)"], [.8, 1, "rgba(217,69,58,.07)"]];
+  bands.forEach(([a, b, col]) => { s += `<rect x="${PL}" y="${ys(b)}" width="${iw}" height="${ys(a) - ys(b)}" fill="${col}"/>`; });
+  // 参考线
+  [.2, .5, .8].forEach(v => {
+    s += `<line x1="${PL}" x2="${W - PR}" y1="${ys(v)}" y2="${ys(v)}" stroke="#aab" stroke-dasharray="4 4" stroke-width="1"/>`;
+    s += `<text x="${PL - 6}" y="${ys(v) + 4}" font-size="11" fill="#8a919e" text-anchor="end">${v * 100}%</text>`;
+  });
+  // 点位曲线
+  s += `<polyline fill="none" stroke="#c9d2e0" stroke-width="1.5" points="` +
+    history.map((h, i) => `${xs(i).toFixed(1)},${yc(h.close).toFixed(1)}`).join(" ") + `"/>`;
+  // 综合百分位曲线
+  s += `<polyline fill="none" stroke="#3b6ef0" stroke-width="2" points="` +
+    history.map((h, i) => `${xs(i).toFixed(1)},${ys(h.composite).toFixed(1)}`).join(" ") + `"/>`;
+  // 端点
+  const last = history[n - 1];
+  s += `<circle cx="${xs(n - 1)}" cy="${ys(last.composite)}" r="4" fill="#3b6ef0"/>`;
+  s += `<text x="${xs(n - 1) - 6}" y="${ys(last.composite) - 8}" font-size="12" fill="#3b6ef0" text-anchor="end" font-weight="600">${(last.composite * 100).toFixed(1)}%</text>`;
+  // X轴年份刻度
+  const years = {};
+  history.forEach((h, i) => { const y = h.date.slice(0, 4); if (!(y in years)) years[y] = i; });
+  Object.entries(years).forEach(([y, i]) => {
+    s += `<text x="${xs(i)}" y="${H - 8}" font-size="11" fill="#8a919e" text-anchor="middle">${y}</text>`;
+  });
+  // 右轴点位刻度
+  [cMin, (cMin + cMax) / 2, cMax].forEach(v => {
+    s += `<text x="${W - PR + 6}" y="${yc(v) + 4}" font-size="11" fill="#aab">${Math.round(v)}</text>`;
+  });
+  svg.innerHTML = s;
+}
+
+async function refreshData() {
+  if (!confirm("从数据源重新拉取全部指数数据，约需1分钟，继续？")) return;
+  await fetch("/api/refresh", { method: "POST" });
+  location.reload();
+}
+
+load();
+</script>
+</body>
+</html>

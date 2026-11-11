@@ -1,0 +1,11 @@
+{
+  "pages": ["pages/index/index", "pages/detail/detail"],
+  "window": {
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTitleText": "指数估值看板",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f4f6f9"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

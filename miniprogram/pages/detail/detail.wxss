@@ -1,0 +1,13 @@
+.name { font-size: 34rpx; font-weight: 600; }
+.zone { font-size: 20rpx; color: #fff; padding: 4rpx 16rpx; border-radius: 20rpx; }
+.composite { font-size: 60rpx; font-weight: 700; margin: 8rpx 0; }
+.c-label { font-size: 22rpx; font-weight: 400; color: #8a919e; margin-left: 8rpx; }
+.sec-title { font-size: 26rpx; font-weight: 600; margin-bottom: 12rpx; }
+.chart { width: 100%; height: 420rpx; }
+.legend { display: flex; gap: 24rpx; font-size: 20rpx; color: #8a919e; margin-top: 10rpx; }
+.dot { display: inline-block; width: 16rpx; height: 16rpx; border-radius: 4rpx; margin-right: 6rpx; }
+.warn-card { margin: 16rpx 24rpx; font-size: 22rpx; color: #b26a00; background: #fdf3e0; border-radius: 16rpx; padding: 16rpx 20rpx; line-height: 1.6; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; margin: 16rpx 24rpx; }
+.stat { background: #fff; border-radius: 16rpx; padding: 18rpx 20rpx; }
+.k { font-size: 22rpx; color: #8a919e; }
+.v { font-size: 34rpx; font-weight: 700; margin-top: 4rpx; }

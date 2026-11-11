@@ -1,0 +1,12 @@
+{
+  "description": "指数估值看板 - 微信小程序",
+  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "libVersion": "3.4.0",
+  "setting": {
+    "es6": true,
+    "urlCheck": false,
+    "minified": true
+  },
+  "projectname": "valuation-board"
+}
