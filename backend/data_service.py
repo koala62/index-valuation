@@ -301,8 +301,49 @@ def load_series(code: str) -> pd.DataFrame | None:
 
 def last_updated(code: str) -> str | None:
     with _lock, _db() as conn:
-        row = conn.execute("SELECT updated_at FROM series WHERE symbol=?", (code,)).fetchone()
-    return row[0] if row else None
+        row = conn.execute("SELECT payload, updated_at FROM series WHERE symbol=?", (code,)).fetchone()
+    return row[1] if row else None
+
+
+# ---------- 中国10年期国债收益率（股债收益差用） ----------
+CN10Y_SYMBOL = "_CN10Y"
+CN10Y_URL = ("https://datacenter-web.eastmoney.com/api/data/v1/get"
+             "?reportName=RPTA_WEB_TREASURYYIELD&columns=ALL&pageNumber={pg}"
+             "&pageSize=800&sortColumns=SOLAR_DATE&sortTypes=-1&source=WEB&client=WEB")
+
+
+def fetch_cn10y() -> pd.DataFrame:
+    """中国10年期国债到期收益率，日频；东财单页上限约800条，需分页"""
+    rows = []
+    for pg in range(1, 20):
+        res = (_get(CN10Y_URL.format(pg=pg), headers=EM_UA).get("result") or {})
+        data = res.get("data") or []
+        if not data:
+            break
+        rows += data
+        if pg >= (res.get("pages") or pg):
+            break
+    if not rows:
+        raise ValueError("国债收益率接口无数据")
+    df = pd.DataFrame([(r["SOLAR_DATE"][:10], r.get("EMM00166466")) for r in rows],
+                      columns=["date", "y10"])
+    df["y10"] = pd.to_numeric(df["y10"], errors="coerce")
+    return (df.dropna().drop_duplicates("date")
+            .sort_values("date").reset_index(drop=True))
+
+
+def save_cn10y(df: pd.DataFrame):
+    payload = json.dumps(df.to_dict(orient="list"), ensure_ascii=False)
+    with _lock, _db() as conn:
+        conn.execute("INSERT OR REPLACE INTO series VALUES(?,?,?)",
+                     (CN10Y_SYMBOL, payload, datetime.now().isoformat()))
+
+
+def load_cn10y() -> pd.DataFrame | None:
+    df = load_series(CN10Y_SYMBOL)
+    if df is None or "y10" not in df.columns or df.empty:
+        return None
+    return df
 
 
 def is_stale(code: str) -> bool:
@@ -330,6 +371,16 @@ def _refresh_one(code: str, force: bool, attempts: int = 2) -> str:
 
 def refresh_all(force: bool = False, max_workers: int = 3) -> dict:
     """并发刷新全部指数，返回 {code: 'ok'|'skip'|error}"""
+    out: dict[str, str] = {}
+    try:
+        if force or is_stale(CN10Y_SYMBOL):
+            save_cn10y(fetch_cn10y())
+            out[CN10Y_SYMBOL] = "ok"
+        else:
+            out[CN10Y_SYMBOL] = "skip"
+    except Exception as e:  # noqa
+        out[CN10Y_SYMBOL] = f"error:{type(e).__name__}"
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {code: pool.submit(_refresh_one, code, force) for code in INDICES}
-        return {code: fut.result() for code, fut in futures.items()}
+        out.update({code: fut.result() for code, fut in futures.items()})
+    return out

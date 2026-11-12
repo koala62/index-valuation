@@ -183,8 +183,12 @@ function renderGrid(list) {
         <span>PB ${d.pb} · 百分位 <b>${pct(d.pb_percentile)}</b></span></div>
       <div class="row"><span>权重 PE <b>${pct(d.w_pe)}</b> / PB <b>${pct(d.w_pb)}</b></span>
         <span>盈利增速 <b>${d.earnings_g == null ? "--" : (d.earnings_g * 100).toFixed(1) + "%"}</b></span></div>
-      ${d.dca == null ? "" : `<div class="row"><span>定投系数 <b>×${d.dca.toFixed(2)}</b></span>
+      ${d.dca == null ? "" : `<div class="row"><span>定投系数 <b>×${d.dca.toFixed(2)}</b>${d.erp_boost ? `<small style="color:var(--muted)"> 含股债${d.erp_boost > 1 ? "+" : "-"}20%</small>` : ""}</span>
         <span>ROE <b>${d.roe == null ? "--" : (d.roe * 100).toFixed(1) + "%"}</b></span></div>`}
+      ${d.erp == null ? "" : `<div class="row"><span>股债收益差 <b>${d.erp.toFixed(2)}%</b></span>
+        <span>近10年分位 <b>${pct(d.erp_percentile)}</b></span></div>`}
+      ${d.erp_boost > 1 ? `<div class="warn info">📈 综合分位 ${pct(d.composite)}（低估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股票相对债券便宜，定投系数上调 20%</div>` : ""}
+      ${d.erp_boost < 1 ? `<div class="warn">⚠ 综合分位 ${pct(d.composite)}（高估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股债性价比偏低，定投系数下调 20%</div>` : ""}
       ${d.history_years && d.history_years < 8 ? `<div class="warn">⚠ 历史仅 ${d.history_years} 年，百分位参考意义有限</div>` : ""}
       ${d.stale_days > 20 ? `<div class="warn">⚠ 行情滞后 ${d.stale_days} 天</div>` : ""}
       ${d.sell_signal ? `<div class="warn">⚠ 触发第 ${d.sell_tier || 1} 档止盈：建议累计减仓 ${Math.round((d.reduce_pct || 0.25) * 100)}%，暂停定投，分2~3批执行</div>` : ""}
@@ -227,7 +231,7 @@ function placeDetail() {
     <div class="detail">
       <h2>${d.name} <span style="color:${c}">${d.composite == null ? "数据积累中" : pct(d.composite)}</span> <span class="zone" style="background:${c}">${d.zone}</span></h2>
       <div class="sub">${d.category_label} · ${d.type_label} · 近${d.history_years}年综合估值百分位走势（PE ${pct(d.w_pe)} / PB ${pct(d.w_pb)} 加权）· ${d.date}</div>
-      <div class="sub">定投系数 ×${d.dca == null ? "--" : d.dca.toFixed(2)}（基准金额的倍数，80% 分位停投，5% 分位封顶 1.5 倍）</div>
+      <div class="sub">定投系数 ×${d.dca == null ? "--" : d.dca.toFixed(2)}（基准金额的倍数，80% 分位停投，5% 分位封顶 1.5 倍）${d.erp_boost ? ` · 含股债性价比${d.erp_boost > 1 ? "上调" : "下调"} 20%` : ""}</div>
       <div class="sub">分批止盈：≥65% 且连续 4 周 → 减仓 25%；≥75% → 累计减仓 50%；≥85% → 清仓观察</div>
       <div class="sub"${d.sell_signal ? ' style="color:var(--high);font-weight:600"' : ""}>连续处于高估区（≥65%）${d.high_weeks == null ? 0 : (d.high_weeks >= 52 ? "52+" : d.high_weeks)} 周${d.sell_signal ? ` · 当前第 ${d.sell_tier} 档，建议累计减仓 ${Math.round((d.reduce_pct || 0) * 100)}%，暂停定投` : "（连续满 4 周触发第 1 档）"}</div>
       <div class="chart-box"><svg id="chart"></svg><div id="tip" class="tip"></div></div>
@@ -250,6 +254,7 @@ function placeDetail() {
         <div class="stat"><div class="k">指数类型</div><div class="v" style="font-size:14px">${d.type_label}</div></div>
         <div class="stat"><div class="k">PE基准→微调后</div><div class="v" style="font-size:14px">${pct(d.base_w_pe)} → ${pct(d.w_pe)}</div></div>
         <div class="stat"><div class="k">历史覆盖</div><div class="v" style="font-size:14px">${d.history_years} 年</div></div>
+        ${d.erp == null ? "" : `<div class="stat"><div class="k">股债收益差(ERP)</div><div class="v">${d.erp.toFixed(2)}%<span style="font-size:12px;color:var(--muted)"> · ${pct(d.erp_percentile)}分位</span></div></div>`}
       </div>
     </div>`);
   drawChart(d.history);

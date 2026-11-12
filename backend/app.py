@@ -38,6 +38,25 @@ GH_REPO = os.environ.get("GH_REPO", "koala62/index-valuation")
 app = FastAPI(title="指数估值看板", version="1.0.0")
 
 _mem_cache: dict[str, dict] = {}   # code -> ValuationResult.to_dict()
+_y10_lock = threading.Lock()
+_y10_cache: dict = {"df": None}
+
+
+def _y10():
+    """10年期国债收益率序列；缺数据时懒加载一次，失败不阻塞估值"""
+    if _y10_cache["df"] is not None:
+        return _y10_cache["df"]
+    with _y10_lock:
+        if _y10_cache["df"] is None:
+            df = ds.load_cn10y()
+            if df is None:
+                try:
+                    ds.save_cn10y(ds.fetch_cn10y())
+                    df = ds.load_cn10y()
+                except Exception:
+                    df = None
+            _y10_cache["df"] = df
+    return _y10_cache["df"]
 
 
 def _compute_one(code: str) -> dict:
@@ -54,7 +73,8 @@ def _compute_one(code: str) -> dict:
     if df is None:
         raise HTTPException(404, f"{code} 暂无数据，请先调用 /api/refresh")
     meta = ds.INDICES[code]
-    result = valuation.compute(code, meta["name"], df, meta["type"]).to_dict()
+    result = valuation.compute(code, meta["name"], df, meta["type"],
+                               cat=meta["cat"], y10=_y10()).to_dict()
     result["category"] = meta["cat"]
     result["category_label"] = ds.CATEGORY_LABEL.get(meta["cat"], "")
     result["updated_at"] = ds.last_updated(code)
@@ -161,7 +181,7 @@ def list_indices(category: str | None = None, zone: str | None = None,
             "base_w_pe", "w_pe", "w_pb", "composite", "zone", "distorted",
             "history_years", "stale_days", "divergence", "roe", "roe_mean3",
             "roe_percentile", "dca", "pe_norm", "high_weeks", "sell_signal",
-            "sell_tier", "reduce_pct")})
+            "sell_tier", "reduce_pct", "erp", "erp_percentile", "erp_boost")})
     if zone and zone != "all":
         out = [x for x in out if x.get("zone") == zone]
     keys = {"composite": lambda x: x.get("composite") if x.get("composite") is not None else 9,
@@ -193,6 +213,7 @@ def index_detail(code: str):
 def refresh():
     result = ds.refresh_all(force=True)
     _mem_cache.clear()
+    _y10_cache["df"] = None
     return {"data": result}
 
 

@@ -53,6 +53,15 @@ SELL_LOOKBACK = 52         # 连续高估计数最多回看一年
 SELL_TIER2, SELL_TIER3 = 0.75, 0.85
 SELL_REDUCE = {1: 0.25, 2: 0.50, 3: 1.00}
 
+# 股债收益差(ERP) = 1/PE - 10年期国债收益率；仅对宽基中的价值/均衡型启用
+# 利率长期下行会抬升 ERP 中枢，故不单看分位，需与综合分位交叉确认才调定投系数
+ERP_CAT = "broad"
+ERP_TYPES = ("value", "balanced")
+ERP_HIGH_PCT, ERP_LOW_PCT = 0.80, 0.20   # ERP 分位阈值
+ERP_ZONE_LOW, ERP_ZONE_HIGH = 0.40, 0.65  # 综合分位需同时满足的区间
+ERP_BOOST, ERP_CUT = 1.20, 0.80           # 定投系数调节倍数
+ERP_YEARS = 10                            # ERP 分位回看年数
+
 
 @dataclass
 class ValuationResult:
@@ -85,6 +94,9 @@ class ValuationResult:
     roe_mean3: Optional[float] = None  # 近3年平均ROE
     roe_percentile: Optional[float] = None
     dca: Optional[float] = None      # 定投系数 0~1.5
+    erp: Optional[float] = None          # 股债收益差 %（1/PE - 10Y国债）
+    erp_percentile: Optional[float] = None  # ERP 近10年分位
+    erp_boost: Optional[float] = None    # 定投系数调节倍数 1.2/0.8
     high_weeks: int = 0              # 综合分位连续处于高估区的周数
     sell_signal: bool = False        # 连续 high_weeks >= SELL_HOLD_WEEKS，提示减仓
     sell_tier: int = 0               # 止盈档位 0=无 1/2/3 对应 65%/75%/85%
@@ -197,10 +209,37 @@ def sell_plan(composite: float, streak: int) -> tuple[int, float]:
     return 0, 0.0
 
 
+def erp_metrics(df: pd.DataFrame, y10: Optional[pd.DataFrame], cat: str,
+                index_type: str, composite: float, data_ok: bool):
+    """股债收益差及其分位：仅宽基中的价值/均衡型启用，且需与综合分位交叉确认
+
+    单看 ERP 分位会因利率长期下行而系统性偏高，故只有"估值也便宜"时才上调定投系数。
+    """
+    if (y10 is None or cat != ERP_CAT or index_type not in ERP_TYPES
+            or y10.empty or not data_ok):
+        return None, None, None
+    d = df.assign(date=pd.to_datetime(df["date"])).sort_values("date")
+    y = y10.assign(date=pd.to_datetime(y10["date"])).sort_values("date")
+    m = pd.merge_asof(d, y, on="date", direction="backward", tolerance=pd.Timedelta(days=10))
+    erp_s = (100.0 / m["pe_ttm"] - m["y10"]).dropna()
+    if len(erp_s) < 100:
+        return None, None, None
+    cur = float(erp_s.iloc[-1])
+    pct = float((erp_s.iloc[-ERP_YEARS * PTS_PER_YEAR:] <= cur).mean())
+    boost = None
+    if pct >= ERP_HIGH_PCT and composite < ERP_ZONE_LOW:
+        boost = ERP_BOOST
+    elif pct <= ERP_LOW_PCT and composite >= ERP_ZONE_HIGH:
+        boost = ERP_CUT
+    return round(cur, 2), round(pct, 4), boost
+
+
 def compute(symbol: str, name: str, df: pd.DataFrame,
-            index_type: str = "balanced") -> ValuationResult:
+            index_type: str = "balanced", cat: str = "",
+            y10: Optional[pd.DataFrame] = None) -> ValuationResult:
     """
     df 需包含列: date(升序), close, pe_ttm, pb  (周频)
+    cat: broad/strategy/industry/hk；y10: 中国10年期国债收益率序列(date, y10)
     """
     df = df.dropna(subset=["close", "pe_ttm", "pb"]).reset_index(drop=True)
     if len(df) < 100:
@@ -275,7 +314,12 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
     data_ok = span_years >= MIN_HISTORY_YEARS
     out_composite = round(composite, 4) if data_ok else None
     out_zone = zone_of(composite) if data_ok else "数据积累中"
+
+    # 股债收益差：仅价值/均衡型宽基，且只在"估值便宜 + 股债性价比高"同时成立时加码
+    erp, erp_pct, erp_boost = erp_metrics(df, y10, cat, index_type, composite, data_ok)
     dca = round(min(DCA_MAX, max(0.0, (DCA_STOP - composite) / DCA_SPAN)), 2) if data_ok else None
+    if dca is not None and erp_boost:
+        dca = round(min(DCA_MAX, max(0.0, dca * erp_boost)), 2)
 
     # 止盈侧：连续 N 周处于高估区才提示减仓，过滤刚触线又回落的假信号
     streak = high_streak(df, w_pe, w_pb)
@@ -288,6 +332,13 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
                  f"暂停定投，分2~3批执行而非一次性卖出。")
         if tier == 3:
             note += "已进入极端高估区，清仓后仅保留观察仓，等待分位回落再重新定投入场。"
+
+    if erp_boost and erp_boost > 1:
+        note += (f"股债收益差 {erp:.2f}%（近十年 {erp_pct:.0%} 分位），且综合分位仅 {composite:.0%}，"
+                 f"股票相对债券便宜，定投系数在估值基础上上调 20%（已封顶 {DCA_MAX} 倍）。")
+    elif erp_boost and erp_boost < 1:
+        note += (f"股债收益差 {erp:.2f}%（近十年 {erp_pct:.0%} 分位），股债性价比偏低，"
+                 f"定投系数下调 20%。")
 
     return ValuationResult(
         symbol=symbol, name=name,
@@ -315,6 +366,9 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         roe_mean3=round(roe_mean3, 4),
         roe_percentile=None if pd.isna(roe_pct) else round(roe_pct, 4),
         dca=dca,
+        erp=erp,
+        erp_percentile=erp_pct,
+        erp_boost=erp_boost,
         high_weeks=out_high_weeks,
         sell_signal=sell_signal,
         sell_tier=tier,
