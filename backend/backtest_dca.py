@@ -52,6 +52,7 @@ def rolling_signals(df: pd.DataFrame, y10: np.ndarray, index_type: str, cat: str
     e = close / pe
     roe = pb / pe
     base = v.BASE_W_PE.get(index_type, 0.50)
+    sell_t1 = v.SELL_TIERS.get(index_type, v.SELL_TIERS["balanced"])[0]
     erp_on = cat == v.ERP_CAT and index_type in v.ERP_TYPES and not np.isnan(y10).all()
     erp_arr = (100.0 / pe - y10) if erp_on else None
 
@@ -90,8 +91,8 @@ def rolling_signals(df: pd.DataFrame, y10: np.ndarray, index_type: str, cat: str
                 boost = v.ERP_CUT
 
         dca = min(v.DCA_MAX, max(0.0, (v.DCA_STOP - c) / v.DCA_SPAN) * boost)
-        streak = streak + 1 if c >= v.ZONE_HIGH else 0
-        tier, _ = v.sell_plan(c, streak)
+        streak = streak + 1 if c >= sell_t1 else 0
+        tier, _ = v.sell_plan(c, streak, index_type)
         comp[i], dcas[i], tiers[i] = c, dca, tier
 
     return pd.DataFrame({"date": df["date"].astype(str).str[:10].to_numpy(),
@@ -136,7 +137,7 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
 
     for i in range(start, len(sig)):
         inflow = 0.0
-        if mode == "dca_sell" and tier[i] > 0:
+        if mode in ("dca_sell", "dca_sell_keep") and tier[i] > 0:
             target = TIER_FRAC[int(tier[i])]
             if target > sold_frac + 1e-9 and units > 0:
                 sell_units = units * (target - sold_frac) / (1 - sold_frac)
@@ -145,8 +146,14 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
                 sold_frac = target
         if mode == "hold":
             amt = 1.0 if i == start else 0.0
-        elif tier[i] == 0:
-            amt = 1.0 if mode == "fixed" else float(dca[i])
+        elif mode == "fixed":
+            amt = 1.0                      # 固定定投不受止盈信号影响
+        elif mode == "dca":
+            amt = float(dca[i])
+        elif mode == "dca_sell":
+            amt = float(dca[i]) if tier[i] == 0 else 0.0
+        elif mode == "dca_sell_keep":
+            amt = float(dca[i])            # 止盈减仓但不停投（成长型备选方案）
         else:
             amt = 0.0
         if amt > 0:
@@ -188,6 +195,8 @@ def main():
             r[key + "_mdd"] = res["mdd"]
             r[key + "_inv"] = res["invested"]
             r[key + "_val"] = res["value"]
+        if meta["type"] == "growth":
+            r["E"] = run_strategy(sig, "dca_sell_keep")["xirr"]
         r["avg_tier3"] = int((sig["tier"] == 3).sum())
         rows.append(r)
 
@@ -212,6 +221,12 @@ def main():
     print(f"\n样本 {n} 个宽基指数；C 跑赢 A: {(out['C'] > out['A']).sum()}/{n}"
           f"；B 跑赢 A: {(out['B'] > out['A']).sum()}/{n}")
     print(f"C 最大回撤均值 {out['C_mdd'].mean():.1%}，A 最大回撤均值 {out['A_mdd'].mean():.1%}")
+
+    g = out.dropna(subset=["E"]) if "E" in out.columns else out.iloc[0:0]
+    if len(g):
+        print("\n成长型对照：E = 止盈时减仓但不停投（C 为减仓并暂停定投）")
+        for _, r in g.iterrows():
+            print(f"  {r['name']:<8} B 系数 {r['B']:>6.2%} | C 停投 {r['C']:>6.2%} | E 不停投 {r['E']:>6.2%}")
     print("\n说明: XIRR 为资金加权年化, 适合分批投入; 回撤为时间加权净值口径;"
           "\n      止盈卖出后资金留存现金、不再投入, 档位累计不重置; 结果作方向参考而非收益承诺")
 

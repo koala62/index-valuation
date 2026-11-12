@@ -49,8 +49,13 @@ DCA_STOP, DCA_SPAN = 0.80, 0.50   # 定投系数: (0.80 - 综合分位) / 0.50
 DCA_MAX = 1.5              # 定投系数上限
 SELL_HOLD_WEEKS = 4        # 综合分位连续处于高估区的周数阈值，达到则提示减仓
 SELL_LOOKBACK = 52         # 连续高估计数最多回看一年
-# 分批止盈档位: (触发分位, 建议累计减仓比例)。65% 档需连续4周确认，更高档位越极端越不需要等待
-SELL_TIER2, SELL_TIER3 = 0.75, 0.85
+# 分批止盈档位: (第1档, 第2档, 第3档) 触发分位, 累计减仓 25%/50%/100%
+# 成长股高估可持续更久(2019-2021 创业板长期高估)，档位整体上移，避免过早离场踏空
+SELL_TIERS = {
+    "value": (0.65, 0.75, 0.85),
+    "balanced": (0.65, 0.75, 0.85),
+    "growth": (0.85, 0.90, 0.95),
+}
 SELL_REDUCE = {1: 0.25, 2: 0.50, 3: 1.00}
 
 # 股债收益差(ERP) = 1/PE - 10年期国债收益率；仅对宽基中的价值/均衡型启用
@@ -194,17 +199,19 @@ def high_streak(df: pd.DataFrame, w_pe: float, w_pb: float,
     return streak
 
 
-def sell_plan(composite: float, streak: int) -> tuple[int, float]:
+def sell_plan(composite: float, streak: int,
+              index_type: str = "balanced") -> tuple[int, float]:
     """分批止盈：返回 (档位, 建议累计减仓比例)
 
-    65% 档容易假突破，需连续 SELL_HOLD_WEEKS 周确认；
-    75%/85% 越极端越不需要等待确认，直接升档。
+    第1档容易假突破，需连续 SELL_HOLD_WEEKS 周确认；
+    更高档位越极端越不需要等待确认。成长型档位整体上移。
     """
-    if composite >= SELL_TIER3:
+    t1, t2, t3 = SELL_TIERS.get(index_type, SELL_TIERS["balanced"])
+    if composite >= t3:
         return 3, SELL_REDUCE[3]
-    if composite >= SELL_TIER2:
+    if composite >= t2:
         return 2, SELL_REDUCE[2]
-    if composite >= ZONE_HIGH and streak >= SELL_HOLD_WEEKS:
+    if composite >= t1 and streak >= SELL_HOLD_WEEKS:
         return 1, SELL_REDUCE[1]
     return 0, 0.0
 
@@ -322,12 +329,13 @@ def compute(symbol: str, name: str, df: pd.DataFrame,
         dca = round(min(DCA_MAX, max(0.0, dca * erp_boost)), 2)
 
     # 止盈侧：连续 N 周处于高估区才提示减仓，过滤刚触线又回落的假信号
-    streak = high_streak(df, w_pe, w_pb)
+    sell_t1 = SELL_TIERS.get(index_type, SELL_TIERS["balanced"])[0]
+    streak = high_streak(df, w_pe, w_pb, threshold=sell_t1)
     out_high_weeks = streak if data_ok else 0
-    tier, reduce_pct = sell_plan(composite, streak) if data_ok else (0, 0.0)
+    tier, reduce_pct = sell_plan(composite, streak, index_type) if data_ok else (0, 0.0)
     sell_signal = tier > 0
     if sell_signal:
-        note += (f"综合分位 {composite:.0%}，已连续 {streak} 周高于 {ZONE_HIGH:.0%}，"
+        note += (f"综合分位 {composite:.0%}，已连续 {streak} 周高于 {sell_t1:.0%}，"
                  f"触发第 {tier} 档止盈：建议累计减仓 {reduce_pct:.0%}，"
                  f"暂停定投，分2~3批执行而非一次性卖出。")
         if tier == 3:
