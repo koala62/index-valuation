@@ -83,7 +83,7 @@
 <script>
 const ZONE_COLOR = { "低估": "var(--low)", "合理偏低": "var(--mid-low)", "合理偏高": "var(--mid-high)", "高估": "var(--high)", "数据积累中": "#8b95a5" };
 const pct = v => (v * 100).toFixed(1) + "%";
-const CAT_LABEL = { all: "全部", broad: "宽基", strategy: "策略红利", industry: "行业" };
+const CAT_LABEL = { all: "全部", broad: "宽基", strategy: "策略红利", industry: "行业", hk: "港股" };
 const ZONES = ["低估", "合理偏低", "合理偏高", "高估"];
 let current = null, allData = [];
 const state = { cat: "all", zone: "all", sort: "composite", q: "" };

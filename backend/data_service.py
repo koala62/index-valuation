@@ -25,7 +25,7 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 EM_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 # 指数分类: broad=宽基, strategy=策略/红利, industry=行业
-CATEGORY_LABEL = {"broad": "宽基", "strategy": "策略红利", "industry": "行业"}
+CATEGORY_LABEL = {"broad": "宽基", "strategy": "策略红利", "industry": "行业", "hk": "港股"}
 
 # 指数类型(决定 PE/PB 基准权重): value=价值/周期, balanced=均衡, growth=成长
 # em=东方财富 secid, sina=新浪代码(兜底)
@@ -78,6 +78,10 @@ INDICES: dict[str, dict] = {
     "SZ399812": dict(name="养老产业", cat="industry", type="balanced", em="0.399812", sina="sz399812"),
     "SZ399417": dict(name="新能源车", cat="industry", type="growth", em="0.399417", sina="sz399417"),
     "CSIH30533": dict(name="中国互联网50", cat="industry", type="growth", em="2.H30533", sina=None),
+    # ---------- 港股 ----------
+    "HKHSI": dict(name="恒生指数", cat="hk", type="value", em=None, sina=None, tx="hkHSI", csindex=False),
+    "HKHSCEI": dict(name="恒生国企", cat="hk", type="value", em=None, sina=None, tx="hkHSCEI", csindex=False),
+    "HKHSTECH": dict(name="恒生科技", cat="hk", type="growth", em=None, sina=None, tx="hkHSTECH", csindex=False),
 }
 
 _lock = threading.Lock()
@@ -118,6 +122,9 @@ EM_KLINE = ("https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}
 SINA_KLINE = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
               "CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen=3000")
 
+TX_KLINE = ("https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get?"
+            "param={sym},day,{start},{end},2000,qfq")
+
 
 def _em_close(secid: str) -> pd.DataFrame:
     """东方财富指数日线收盘价（2015年至今）"""
@@ -145,6 +152,38 @@ def _sina_close(sina_code: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["day"]).dt.strftime("%Y-%m-%d")
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
     return df[["date", "close"]].dropna().reset_index(drop=True)
+
+
+def _tx_close(tx_code: str) -> pd.DataFrame:
+    """腾讯港股指数日线收盘价；单次最多2000根，向前分段补足以覆盖10年"""
+    if not tx_code:
+        raise ValueError("无腾讯代码")
+
+    def seg(start: str, end: str) -> pd.DataFrame:
+        url = TX_KLINE.format(sym=tx_code, start=start, end=end)
+        d = _get(url, headers=EM_UA)
+        node = (d.get("data") or {}).get(tx_code) or {}
+        rows = node.get("day") or node.get("qfqday") or []
+        if not rows:
+            return pd.DataFrame(columns=["date", "close"])
+        out = pd.DataFrame([(r[0], r[2]) for r in rows], columns=["date", "close"])
+        out["close"] = pd.to_numeric(out["close"], errors="coerce")
+        return out.dropna().sort_values("date").reset_index(drop=True)
+
+    df = seg("", "")
+    if df.empty:
+        raise ValueError(f"腾讯返回空数据: {tx_code}")
+    target = pd.Timestamp.now().normalize() - pd.Timedelta(days=365 * 10)
+    for _ in range(2):   # 最多再向前补两段
+        if pd.to_datetime(df["date"].iloc[0]) <= target:
+            break
+        end = (pd.to_datetime(df["date"].iloc[0]) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        more = seg("", end)
+        if more.empty:
+            break
+        df = (pd.concat([more, df]).drop_duplicates("date", keep="last")
+              .sort_values("date").reset_index(drop=True))
+    return df
 
 
 STALE_SOURCE_DAYS = 30     # 行情源最新日期滞后超过该天数，视为断更
@@ -181,8 +220,9 @@ def _close_series(code: str, meta: dict) -> pd.DataFrame:
     若最优源最新日期仍明显滞后(东财偶发失败/被限流、新浪停更)，
     先串行重试一轮，再用中证指数官网兜底；仍滞后则报错，不落库失真数据。
     """
-    sources = [(fn, arg) for fn, arg in ((_em_close, meta.get("em")), (_sina_close, meta.get("sina")))
-               if arg]
+    sources = [(fn, arg) for fn, arg in (
+        (_em_close, meta.get("em")), (_sina_close, meta.get("sina")),
+        (_tx_close, meta.get("tx"))) if arg]
     errors = []
 
     def fetch_all():
@@ -210,11 +250,12 @@ def _close_series(code: str, meta: dict) -> pd.DataFrame:
         cands += fetch_all()
         best = best_of(cands) if cands else None
     if best is None or too_stale(best):
-        try:
-            cands.append(_csindex_close(_csindex_code(code)))
-            best = best_of(cands)
-        except Exception as e:  # noqa
-            errors.append(f"_csindex_close:{type(e).__name__}")
+        if meta.get("csindex", True):
+            try:
+                cands.append(_csindex_close(_csindex_code(code)))
+                best = best_of(cands)
+            except Exception as e:  # noqa
+                errors.append(f"_csindex_close:{type(e).__name__}")
     if best is None:
         raise ValueError(f"行情获取失败 ({', '.join(errors) or '无可用数据源'})")
     if too_stale(best):
