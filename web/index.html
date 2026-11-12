@@ -187,8 +187,8 @@ function renderGrid(list) {
         <span>ROE <b>${d.roe == null ? "--" : (d.roe * 100).toFixed(1) + "%"}</b></span></div>`}
       ${d.erp == null ? "" : `<div class="row"><span>股债收益差 <b>${d.erp.toFixed(2)}%</b></span>
         <span>近10年分位 <b>${pct(d.erp_percentile)}</b></span></div>`}
-      ${d.erp_boost > 1 ? `<div class="warn info">📈 综合分位 ${pct(d.composite)}（低估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股票相对债券便宜，定投系数上调 20%</div>` : ""}
-      ${d.erp_boost < 1 ? `<div class="warn">⚠ 综合分位 ${pct(d.composite)}（高估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股债性价比偏低，定投系数下调 20%</div>` : ""}
+      ${d.erp_boost != null && d.erp_boost > 1 ? `<div class="warn info">📈 综合分位 ${pct(d.composite)}（低估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股票相对债券便宜，定投系数上调 20%</div>` : ""}
+      ${d.erp_boost != null && d.erp_boost < 1 ? `<div class="warn">⚠ 综合分位 ${pct(d.composite)}（高估），且股债收益差 ${d.erp.toFixed(2)}% 处近十年 ${pct(d.erp_percentile)} 分位，股债性价比偏低，定投系数下调 20%</div>` : ""}
       ${d.history_years && d.history_years < 8 ? `<div class="warn">⚠ 历史仅 ${d.history_years} 年，百分位参考意义有限</div>` : ""}
       ${d.stale_days > 20 ? `<div class="warn">⚠ 行情滞后 ${d.stale_days} 天</div>` : ""}
       ${d.sell_signal ? `<div class="warn">⚠ 触发第 ${d.sell_tier || 1} 档止盈：建议累计减仓 ${Math.round((d.reduce_pct || 0.25) * 100)}%，暂停定投，分2~3批执行</div>` : ""}
