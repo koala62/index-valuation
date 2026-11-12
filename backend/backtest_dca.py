@@ -129,6 +129,7 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
 
     units = cash = invested = 0.0
     sold_frac = 0.0
+    held_weeks = 0
     flows: list[tuple[pd.Timestamp, float]] = []
     nav = peak = 1.0
     mdd = 0.0
@@ -137,13 +138,15 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
 
     for i in range(start, len(sig)):
         inflow = 0.0
-        if mode in ("dca_sell", "dca_sell_keep") and tier[i] > 0:
+        if mode in ("dca_sell", "dca_sell_keep", "cycle") and tier[i] > 0:
             target = TIER_FRAC[int(tier[i])]
             if target > sold_frac + 1e-9 and units > 0:
                 sell_units = units * (target - sold_frac) / (1 - sold_frac)
                 cash += sell_units * price[i]
                 units -= sell_units
                 sold_frac = target
+                if mode == "cycle" and units <= 1e-12:
+                    sold_frac = 0.0   # 清仓后重置档位，等待下一轮低估再入场
         if mode == "hold":
             amt = 1.0 if i == start else 0.0
         elif mode == "fixed":
@@ -154,6 +157,9 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
             amt = float(dca[i]) if tier[i] == 0 else 0.0
         elif mode == "dca_sell_keep":
             amt = float(dca[i])            # 止盈减仓但不停投（成长型备选方案）
+        elif mode == "cycle":
+            # 低估/合理偏低才买入，高估卖出，合理偏高持有不动
+            amt = float(dca[i]) if comp[i] < v.ZONE_MID else 0.0
         else:
             amt = 0.0
         if amt > 0:
@@ -163,6 +169,8 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
             flows.append((dates.iloc[i], -amt))
 
         val = units * price[i] + cash
+        if units > 0:
+            held_weeks += 1
         if prev_val > 0:
             r = (val - inflow) / prev_val - 1
             nav *= (1 + r)
@@ -173,7 +181,8 @@ def run_strategy(sig: pd.DataFrame, mode: str) -> dict:
     final_val = units * price[-1] + cash
     flows.append((dates.iloc[-1], final_val))
     return {"invested": invested, "value": final_val,
-            "xirr": xirr(flows), "mdd": mdd}
+            "xirr": xirr(flows), "mdd": mdd,
+            "hold_ratio": held_weeks / max(1, len(sig) - start)}
 
 
 def main():
@@ -197,6 +206,9 @@ def main():
             r[key + "_val"] = res["value"]
         if meta["type"] == "growth":
             r["E"] = run_strategy(sig, "dca_sell_keep")["xirr"]
+        cyc = run_strategy(sig, "cycle")
+        r["F"], r["F_hold"], r["F_inv"], r["F_val"] = (
+            cyc["xirr"], cyc["hold_ratio"], cyc["invested"], cyc["value"])
         r["avg_tier3"] = int((sig["tier"] == 3).sum())
         rows.append(r)
 
@@ -227,6 +239,20 @@ def main():
         print("\n成长型对照：E = 止盈时减仓但不停投（C 为减仓并暂停定投）")
         for _, r in g.iterrows():
             print(f"  {r['name']:<8} B 系数 {r['B']:>6.2%} | C 停投 {r['C']:>6.2%} | E 不停投 {r['E']:>6.2%}")
+
+    print(f"\n{'=' * 96}")
+    print("周期策略 F：综合分位 <40% 才买入，≥高估线分批卖出，清仓后等回落再入场")
+    print(f"{'-' * 96}")
+    print(f"{'指数':<10}{'B 持续定投':>12}{'B 期末/投入':>12}{'F 低估买高估卖':>16}{'F 持仓时间':>12}{'F 期末/投入':>12}")
+    print("-" * 96)
+    for _, r in out.iterrows():
+        rb = r["B_val"] / r["B_inv"] if r["B_inv"] else float("nan")
+        rf = r["F_val"] / r["F_inv"] if r["F_inv"] else float("nan")
+        print(f"{r['name']:<10}{r['B']:>12.2%}{rb:>12.2f}{r['F']:>16.2%}{r['F_hold']:>12.0%}{rf:>12.2f}")
+    print(f"{'平均':<10}{out['B'].mean():>12.2%}{out['F'].mean():>16.2%}"
+          f"{out['F_hold'].mean():>12.0%}{'':>10}{'':>11}")
+    print("\n注: F 的 XIRR 只统计实际投入的资金，空仓期不计入，故偏高；"
+          "\n    需结合「持仓时间」与「期末/投入」一起看，持仓时间越低越依赖择时准确性")
     print("\n说明: XIRR 为资金加权年化, 适合分批投入; 回撤为时间加权净值口径;"
           "\n      止盈卖出后资金留存现金、不再投入, 档位累计不重置; 结果作方向参考而非收益承诺")
 
